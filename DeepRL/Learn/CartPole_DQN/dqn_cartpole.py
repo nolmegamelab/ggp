@@ -8,58 +8,52 @@ from tensorflow.keras.layers import Dense
 from tensorflow.keras.optimizers import Adam 
 from tensorflow.keras.models import Sequential 
 
-EPISODES = 300
+EPISODES = 1000
 
 class DQNAgent: 
 
     def __init__(self, state_size, action_size):
         self.render = True
-        self.load_model = False 
+        self.load_model = True
 
         self.state_size = state_size
         self.action_size = action_size 
 
         self.discount_factor = 0.99 
         self.learning_rate = 0.001
-        self.epsilon = 1.0 
-        self.epsilon_decay = 0.999 
+        self.epsilon = 0.01
+        self.epsilon_decay = 0.9999 
         self.epsilon_min = 0.01 
-        self.batch_size = 64 
-        self.train_start = 1000 
+        self.batch_size =  128 
+        self.train_start = 2000 
 
-        self.memory = deque(maxlen = 2000)
+        self.memory = deque(maxlen = 4000)
 
         self.model = self.build_model() 
         self.target_model = self.build_model() 
 
-        self.update_target_model() 
-
         if self.load_model: 
             self.model.load_weights("./save_model/cartpole_dqn_trained.h5")
+
+        self.update_target_model() 
         
     def build_model(self): 
         model = Sequential() 
-        model.add(
-            Dense( 
+        model.add(Dense( 
                 24, 
                 input_dim=self.state_size, activation='relu', 
                 kernel_initializer='he_uniform'
-            )
-        )
-        model.add(
-            Dense( 
+            ))
+        model.add(Dense( 
                 24, 
                 activation='relu', 
                 kernel_initializer='he_uniform'
-            )
-        )
-        model.add(
-            Dense( 
+            ))
+        model.add(Dense( 
                 self.action_size, 
                 activation='linear', 
                 kernel_initializer='he_uniform'
-            )
-        )
+            ))
         model.summary()
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
@@ -151,8 +145,8 @@ if __name__ == "__main__":
                 print("epsode: {} score: {} memory length: {} epsilon: {}".format(
                     e, score, len(agent.memory), agent.epsilon))
                 
-                if np.mean(scores[-min(10, len(scores)):]) > 490: 
+                if np.mean(scores[-min(10, len(scores)):]) > 50: 
                     agent.model.save_weights("./save_model/cartpole_dqn.h5")
-                    sys.exit()
+                    #sys.exit()
 
                 
