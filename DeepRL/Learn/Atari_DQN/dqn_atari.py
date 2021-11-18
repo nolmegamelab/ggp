@@ -37,8 +37,6 @@ class DQN(tf.keras.Model):
 # 브레이크아웃 예제에서의 DQN 에이전트
 class DQNAgent:
     def __init__(self, action_size, state_size=(84, 84, 4)):
-        self.render = False
-
         # 상태와 행동의 크기 정의
         self.state_size = state_size
         self.action_size = action_size
@@ -46,13 +44,13 @@ class DQNAgent:
         # DQN 하이퍼파라미터
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon = 1.
-        self.epsilon_start, self.epsilon_end = 1.0, 0.02
+        self.epsilon = 1
+        self.epsilon_start, self.epsilon_end = 0.5, 0.01
         self.exploration_steps = 1000000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
         self.batch_size = 32
-        self.train_start = 50000
+        self.train_start = 100000
         self.update_target_rate = 10000
 
         # 리플레이 메모리, 최대 크기 100,000
@@ -64,6 +62,12 @@ class DQNAgent:
         self.model = DQN(action_size, state_size)
         self.target_model = DQN(action_size, state_size)
         self.optimizer = Adam(self.learning_rate, clipnorm=10.)
+
+        load_model = False
+
+        if load_model:
+            self.model.load_weights("./save_model/model")
+
         # 타깃 모델 초기화
         self.update_target_model()
 
@@ -105,6 +109,7 @@ class DQNAgent:
             self.epsilon -= self.epsilon_decay_step
 
         # 메모리에서 배치 크기만큼 무작위로 샘플 추출
+        # 이 부분은 논문과 다르다 - 최신에서 샘플링. 
         batch = random.sample(self.memory, self.batch_size)
 
         history = np.array([sample[0][0] / 255. for sample in batch],
@@ -152,7 +157,10 @@ def pre_processing(observe):
 
 if __name__ == "__main__":
     # 환경과 DQN 에이전트 생성
+    #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
     env = gym.make('BreakoutDeterministic-v4')
+    render = False
+
     agent = DQNAgent(action_size=3)
 
     global_step = 0
@@ -162,7 +170,7 @@ if __name__ == "__main__":
     # 불필요한 행동을 없애주기 위한 딕셔너리 선언
     action_dict = {0:1, 1:2, 2:3, 3:3}
 
-    num_episode = 50000
+    num_episode = 50000 
     for e in range(num_episode):
         done = False
         dead = False
@@ -181,7 +189,7 @@ if __name__ == "__main__":
         history = np.reshape([history], (1, 84, 84, 4))
 
         while not done:
-            if agent.render:
+            if render:
                 env.render()
             global_step += 1
             step += 1
