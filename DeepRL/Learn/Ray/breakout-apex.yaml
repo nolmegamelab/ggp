@@ -1,9 +1,9 @@
 breakout-a2c:
     env: Breakout-v4
-    run: A2C
+    run: APEX
     stop:
         episode_reward_mean: 200
-        timesteps_total: 5000000
+        timesteps_total: 500000
     config:
         # Works for both torch and tf.
         framework: tf
