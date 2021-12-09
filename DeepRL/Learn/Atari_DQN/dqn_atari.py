@@ -44,17 +44,17 @@ class DQNAgent:
         # DQN 하이퍼파라미터
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon = 0.5
-        self.epsilon_start, self.epsilon_end = 0.5, 0.01
-        self.exploration_steps = 500000.
+        self.epsilon_start, self.epsilon_end = 1, 0.01
+        self.epsilon = self.epsilon_start
+        self.exploration_steps = 1000000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
         self.batch_size = 32 
         self.train_start = 10000
         self.update_target_rate = 10000
 
-        # 리플레이 메모리, 최대 크기 100,000
-        self.memory = deque(maxlen=100000)
+        # 리플레이 메모리, 최대 크기 500,000
+        self.memory = deque(maxlen=50000)
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
         self.no_op_steps = 30
 
@@ -63,7 +63,7 @@ class DQNAgent:
         self.target_model = DQN(action_size, state_size)
         self.optimizer = Adam(self.learning_rate, clipnorm=10.)
 
-        load_model = True
+        load_model = False
 
         if load_model:
             self.model.load_weights("./save_model/model")
@@ -150,8 +150,7 @@ class DQNAgent:
 
 # 학습속도를 높이기 위해 흑백화면으로 전처리
 def pre_processing(observe):
-    processed_observe = np.uint8(
-        resize(rgb2gray(observe), (84, 84), mode='constant') * 255)
+    processed_observe = resize(rgb2gray(observe), (84, 84), mode='constant') / 255
     return processed_observe
 
 
@@ -251,12 +250,12 @@ if __name__ == "__main__":
                 log += "memory length: {:5d} | ".format(len(agent.memory))
                 log += "epsilon: {:.3f} | ".format(agent.epsilon)
                 log += "q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
-                log += "avg loss : {:3.2f}".format(agent.avg_loss / float(step))
+                log += "avg loss : {:3.4f}".format(agent.avg_loss / float(step))
                 print(log)
 
                 agent.avg_q_max, agent.avg_loss = 0, 0
 
         # 100 에피소드마다 모델 저장
-        if e % 100 == 0:
+        if e % 50 == 0:
             agent.model.save_weights("./save_model/model", save_format="tf")
             print('model saved\n')
