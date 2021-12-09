@@ -16,12 +16,12 @@ from tensorflow.keras.layers import Conv2D, Dense, Flatten
 class DQN(tf.keras.Model):
     def __init__(self, action_size, state_size):
         super(DQN, self).__init__()
-        self.conv1 = Conv2D(32, (8, 8), strides=(4, 4), activation='relu',
+        self.conv1 = Conv2D(16, (8, 8), strides=(4, 4), activation='relu',
                             input_shape=state_size)
-        self.conv2 = Conv2D(64, (4, 4), strides=(2, 2), activation='relu')
-        self.conv3 = Conv2D(64, (3, 3), strides=(1, 1), activation='relu')
+        self.conv2 = Conv2D(32, (4, 4), strides=(2, 2), activation='relu')
+        self.conv3 = Conv2D(32, (3, 3), strides=(1, 1), activation='relu')
         self.flatten = Flatten()
-        self.fc = Dense(512, activation='relu')
+        self.fc = Dense(256, activation='relu')
         self.fc_out = Dense(action_size)
 
     def call(self, x):
@@ -44,19 +44,19 @@ class DQNAgent:
         # DQN 하이퍼파라미터
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon = 0.001
+        self.epsilon = 1
         self.epsilon_start, self.epsilon_end = 0.5, 0.01
-        self.exploration_steps = 100000.
+        self.exploration_steps = 1000000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
-        self.epsilon_decay_step = 1
+        self.epsilon_decay_step /= self.exploration_steps
         self.batch_size = 32
-        self.train_start = 10000000000
+        self.train_start = 100000
         self.update_target_rate = 10000
 
-        # 리플레이 메모리, 최대 크기 100,000
-        self.memory = deque(maxlen=100000)
+        # 리플레이 메모리, 최대 크기 2000,000
+        self.memory = deque(maxlen=200000)
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
-        self.no_op_steps = 30
+        self.no_op_steps = 60
 
         # 모델과 타깃 모델 생성
         self.model = DQN(action_size, state_size)
@@ -82,8 +82,12 @@ class DQNAgent:
 
     # 입실론 탐욕 정책으로 행동 선택
     def get_action(self, history):
-        q_value = self.model(history)
-        return np.argmax(q_value[0])
+        history = np.float32(history / 255.0)
+        if np.random.rand() <= self.epsilon:
+            return random.randrange(self.action_size)
+        else:
+            q_value = self.model(history)
+            return np.argmax(q_value[0])
 
     # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장
     def append_sample(self, history, action, reward, next_history, dead):
@@ -153,8 +157,9 @@ def pre_processing(observe):
 
 if __name__ == "__main__":
     # 환경과 DQN 에이전트 생성
+    #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
     env = gym.make('BreakoutDeterministic-v4')
-    render = True 
+    render = False
 
     agent = DQNAgent(action_size=3)
 
@@ -211,6 +216,25 @@ if __name__ == "__main__":
                 dead = True
                 start_life = info['lives']
 
+            score += reward
+            reward = np.clip(reward, -1., 1.)
+            # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장 후 학습
+            agent.append_sample(history, action, reward, next_history, dead)
+
+            # 리플레이 메모리 크기가 정해놓은 수치에 도달한 시점부터 모델 학습 시작
+            if len(agent.memory) >= agent.train_start:
+                agent.train_model()
+                # 일정 시간마다 타겟모델을 모델의 가중치로 업데이트
+                if global_step % agent.update_target_rate == 0:
+                    agent.update_target_model()
+
+            if dead:
+                history = np.stack((next_state, next_state,
+                                    next_state, next_state), axis=2)
+                history = np.reshape([history], (1, 84, 84, 4))
+            else:
+                history = next_history
+
             if done:
                 # 각 에피소드 당 학습 정보를 기록
                 if global_step > agent.train_start:
@@ -231,5 +255,6 @@ if __name__ == "__main__":
 
                 agent.avg_q_max, agent.avg_loss = 0, 0
 
-
-
+        # 1000 에피소드마다 모델 저장
+        if e % 1000 == 0:
+            agent.model.save_weights("./save_model/model", save_format="tf")
