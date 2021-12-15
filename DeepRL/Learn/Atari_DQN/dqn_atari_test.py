@@ -16,12 +16,12 @@ from tensorflow.keras.layers import Conv2D, Dense, Flatten
 class DQN(tf.keras.Model):
     def __init__(self, action_size, state_size):
         super(DQN, self).__init__()
-        self.conv1 = Conv2D(32, (8, 8), strides=(4, 4), activation='relu',
+        self.conv1 = Conv2D(16, (8, 8), strides=(4, 4), activation='relu',
                             input_shape=state_size)
-        self.conv2 = Conv2D(64, (4, 4), strides=(2, 2), activation='relu')
-        self.conv3 = Conv2D(64, (3, 3), strides=(1, 1), activation='relu')
+        self.conv2 = Conv2D(32, (4, 4), strides=(2, 2), activation='relu')
+        self.conv3 = Conv2D(32, (3, 3), strides=(1, 1), activation='relu')
         self.flatten = Flatten()
-        self.fc = Dense(512, activation='relu')
+        self.fc = Dense(256, activation='relu')
         self.fc_out = Dense(action_size)
 
     def call(self, x):
@@ -42,19 +42,21 @@ class DQNAgent:
         self.action_size = action_size
 
         # DQN 하이퍼파라미터
+        # 0.6 : 한번 훈련 후 지정 
+        # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon = 0.001
-        self.epsilon_start, self.epsilon_end = 0.5, 0.01
-        self.exploration_steps = 100000.
+        self.epsilon_start, self.epsilon_end = 0.00001, 0.00001
+        self.epsilon = self.epsilon_start
+        self.exploration_steps = 50000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
-        self.epsilon_decay_step = 1
-        self.batch_size = 32
-        self.train_start = 10000000000
+        self.epsilon_decay_step /= self.exploration_steps
+        self.batch_size = 32 
+        self.train_start = 10000
         self.update_target_rate = 10000
 
-        # 리플레이 메모리, 최대 크기 100,000
-        self.memory = deque(maxlen=100000)
+        # 리플레이 메모리
+        self.memory = deque(maxlen=20000)
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
         self.no_op_steps = 30
 
@@ -108,11 +110,11 @@ class DQNAgent:
         # 이 부분은 논문과 다르다 - 최신에서 샘플링. 
         batch = random.sample(self.memory, self.batch_size)
 
-        history = np.array([sample[0][0] / 255. for sample in batch],
+        history = np.array([sample[0][0] for sample in batch],
                            dtype=np.float32)
         actions = np.array([sample[1] for sample in batch])
         rewards = np.array([sample[2] for sample in batch])
-        next_history = np.array([sample[3][0] / 255. for sample in batch],
+        next_history = np.array([sample[3][0] for sample in batch],
                                 dtype=np.float32)
         dones = np.array([sample[4] for sample in batch])
 
@@ -146,90 +148,106 @@ class DQNAgent:
 
 # 학습속도를 높이기 위해 흑백화면으로 전처리
 def pre_processing(observe):
-    processed_observe = np.uint8(
-        resize(rgb2gray(observe), (84, 84), mode='constant') * 255)
+    # rgb2gray에서 float 형으로 변경
+    processed_observe = resize(rgb2gray(observe), (84, 84), mode='constant') 
     return processed_observe
 
 
 if __name__ == "__main__":
-    # 환경과 DQN 에이전트 생성
-    env = gym.make('BreakoutDeterministic-v4')
-    render = True 
+    for loop in range(0, 1000):
+        # 환경과 DQN 에이전트 생성
+        #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
+        env = gym.make('BreakoutDeterministic-v4')
+        render = True
 
-    agent = DQNAgent(action_size=3)
+        agent = DQNAgent(action_size=3)
 
-    global_step = 0
-    score_avg = 0
-    score_max = 0
+        global_step = 0
+        score_avg = 0
+        score_max = 0
 
-    # 불필요한 행동을 없애주기 위한 딕셔너리 선언
-    action_dict = {0:1, 1:2, 2:3, 3:3}
+        # 불필요한 행동을 없애주기 위한 딕셔너리 선언
+        action_dict = {0:1, 1:2, 2:3, 3:3}
 
-    num_episode = 50000 
-    for e in range(num_episode):
-        done = False
-        dead = False
+        num_episode = 200 
+        for e in range(num_episode):
+            done = False
+            dead = False
 
-        step, score, start_life = 0, 0, 5
-        # env 초기화
-        observe = env.reset()
+            step, score, start_life = 0, 0, 5
+            # env 초기화
+            observe = env.reset()
 
-        # 랜덤으로 뽑힌 값 만큼의 프레임동안 움직이지 않음
-        for _ in range(random.randint(1, agent.no_op_steps)):
-            observe, _, _, _ = env.step(1)
+            # 랜덤으로 뽑힌 값 만큼의 프레임동안 움직이지 않음
+            for _ in range(random.randint(1, agent.no_op_steps)):
+                observe, _, _, _ = env.step(1)
 
-        # 프레임을 전처리 한 후 4개의 상태를 쌓아서 입력값으로 사용.
-        state = pre_processing(observe)
-        history = np.stack((state, state, state, state), axis=2)
-        history = np.reshape([history], (1, 84, 84, 4))
+            # 프레임을 전처리 한 후 4개의 상태를 쌓아서 입력값으로 사용.
+            state = pre_processing(observe)
+            history = np.stack((state, state, state, state), axis=2)
+            history = np.reshape([history], (1, 84, 84, 4))
 
-        while not done:
-            if render:
-                env.render()
-            global_step += 1
-            step += 1
+            while not done:
+                if render:
+                    env.render()
+                global_step += 1
+                step += 1
 
-            # 바로 전 history를 입력으로 받아 행동을 선택
-            action = agent.get_action(history)
-            # 1: 정지, 2: 왼쪽, 3: 오른쪽
-            real_action = action_dict[action]
+                # 바로 전 history를 입력으로 받아 행동을 선택
+                action = agent.get_action(history)
+                # 1: 정지, 2: 왼쪽, 3: 오른쪽
+                real_action = action_dict[action]
 
-            # 죽었을 때 시작하기 위해 발사 행동을 함
-            if dead:
-                action, real_action, dead = 0, 1, False
+                # 죽었을 때 시작하기 위해 발사 행동을 함
+                if dead:
+                    action, real_action, dead = 0, 1, False
 
-            # 선택한 행동으로 환경에서 한 타임스텝 진행
-            observe, reward, done, info = env.step(real_action)
-            # 각 타임스텝마다 상태 전처리
-            next_state = pre_processing(observe)
-            next_state = np.reshape([next_state], (1, 84, 84, 1))
-            next_history = np.append(next_state, history[:, :, :, :3], axis=3)
+                # 선택한 행동으로 환경에서 한 타임스텝 진행
+                observe, reward, done, info = env.step(real_action)
+                # 각 타임스텝마다 상태 전처리
+                next_state = pre_processing(observe)
+                next_state = np.reshape([next_state], (1, 84, 84, 1))
+                next_history = np.append(next_state, history[:, :, :, :3], axis=3)
 
-            agent.avg_q_max += np.amax(agent.model(np.float32(history / 255.))[0])
+                agent.avg_q_max += np.amax(agent.model(np.float32(history / 255.))[0])
 
-            if start_life > info['lives']:
-                dead = True
-                start_life = info['lives']
+                if start_life > info['lives']:
+                    dead = True
+                    reward = -1
+                    start_life = info['lives']
 
-            if done:
-                # 각 에피소드 당 학습 정보를 기록
-                if global_step > agent.train_start:
-                    agent.draw_tensorboard(score, step, e)
+                score += reward
+                reward = np.clip(reward, -1., 1.)
 
-                score_avg = 0.9 * score_avg + 0.1 * score if score_avg != 0 else score
-                score_max = score if score > score_max else score_max
+                if dead:
+                    history = np.stack((next_state, next_state,
+                                        next_state, next_state), axis=2)
+                    history = np.reshape([history], (1, 84, 84, 4))
+                else:
+                    history = next_history
 
-                log = "episode: {:5d} | ".format(e)
-                log += "score: {:4.1f} | ".format(score)
-                log += "score max : {:4.1f} | ".format(score_max)
-                log += "score avg: {:4.1f} | ".format(score_avg)
-                log += "memory length: {:5d} | ".format(len(agent.memory))
-                log += "epsilon: {:.3f} | ".format(agent.epsilon)
-                log += "q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
-                log += "avg loss : {:3.2f}".format(agent.avg_loss / float(step))
-                print(log)
+                if done:
+                    # 각 에피소드 당 학습 정보를 기록
+                    if global_step > agent.train_start:
+                        agent.draw_tensorboard(score, step, e)
 
-                agent.avg_q_max, agent.avg_loss = 0, 0
+                    score_avg = 0.9 * score_avg + 0.1 * score if score_avg != 0 else score
+                    score_max = score if score > score_max else score_max
 
+                    log = "loop: {:5d} | ".format(loop)
+                    log += "episode: {:5d} | ".format(e)
+                    log += "score: {:4.1f} | ".format(score)
+                    log += "score max : {:4.1f} | ".format(score_max)
+                    log += "score avg: {:4.1f} | ".format(score_avg)
+                    log += "memory length: {:5d} | ".format(len(agent.memory))
+                    log += "epsilon: {:.3f} | ".format(agent.epsilon)
+                    log += "q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
+                    log += "avg loss : {:3.4f}".format(agent.avg_loss / float(step))
+                    print(log)
 
+                    agent.avg_q_max, agent.avg_loss = 0, 0
 
+            # 모델 저장
+            if (e+1) % 50 == 0:
+                agent.model.save_weights("./save_model/model", save_format="tf")
+                print('model saved\n')

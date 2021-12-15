@@ -28,6 +28,9 @@ PlayBot은 게임 플레이 봇이라는 뜻이다. 여기서는 DeepRL을 통�
     - RL 알고리즘 
     - SEED RL 구조 
     - C# 연동 
+        - SciSharp/TensorFlow.NET
+
+
 
 
 

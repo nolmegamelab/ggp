@@ -46,17 +46,17 @@ class DQNAgent:
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon_start, self.epsilon_end = 0.6, 0.01
+        self.epsilon_start, self.epsilon_end = 0.01, 0.00001
         self.epsilon = self.epsilon_start
-        self.exploration_steps = 500000.
+        self.exploration_steps = 50000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
         self.batch_size = 32 
         self.train_start = 10000
         self.update_target_rate = 10000
 
-        # 리플레이 메모리, 최대 크기 500,000
-        self.memory = deque(maxlen=50000)
+        # 리플레이 메모리
+        self.memory = deque(maxlen=20000)
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
         self.no_op_steps = 30
 
@@ -172,7 +172,7 @@ if __name__ == "__main__":
         # 불필요한 행동을 없애주기 위한 딕셔너리 선언
         action_dict = {0:1, 1:2, 2:3, 3:3}
 
-        num_episode = 3000 
+        num_episode = 200 
         for e in range(num_episode):
             done = False
             dead = False
@@ -260,7 +260,7 @@ if __name__ == "__main__":
 
                     agent.avg_q_max, agent.avg_loss = 0, 0
 
-            # 100 에피소드마다 모델 저장
-            if e % 50 == 0:
+            # 모델 저장
+            if (e+1) % 50 == 0:
                 agent.model.save_weights("./save_model/model", save_format="tf")
                 print('model saved\n')
