@@ -1,6 +1,6 @@
 # D5QN 
 
-Distributed Demostrated Double Dueling Deep Q Network 
+Distributed Demonstrated Double Dueling Deep Q Network 
 
 D5QN은 MMORPG의 게임 플레이를 자동화하기 위한 노력의 일환으로 진행하는 프로젝트로 
 Ape-X와 R2D3의 Demonstration 아이디어를 추가하고 Double Dueling Deep Q Network (D3QN)에 

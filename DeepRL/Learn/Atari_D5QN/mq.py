@@ -4,7 +4,7 @@ import queue
 import time
 import msgpack
 
-class MqProducer(object):
+class MqProducer(threading.Thread):
     '''
     MqProducer joins exchange with exchg_name and publish messages to the exchange. 
     The exchange is fanout to broadcast to all consumers joined to that exchange.
@@ -13,25 +13,18 @@ class MqProducer(object):
     def __init__(self, exchg_name):
         super(MqProducer, self).__init__()
         self.exchg_name = exchg_name
+        self.queue = queue.Queue()
         self._initMq()
-
-    def start(self):
-        self._initMq()
-        print(f'mq initialized {self.exchg_name}')
-        self.q_channel.start_consuming()
 
     def publish(self, m):
-        assert m is not None
-        self.q_channel.basic_publish(
-                            exchange=self.exchg_name, 
-                            routing_key='', 
-                            body=m)
+        self.queue.put(m)
 
     def close(self):
         self.q_conn.close()
 
-    def join(self):
-        pass
+    def run(self):
+        while True:
+            self._publish()
 
     def _initMq(self):
         self.q_conn = pika.BlockingConnection(
@@ -40,9 +33,19 @@ class MqProducer(object):
         self.q_channel = self.q_conn.channel()
         self.q_channel.exchange_declare(self.exchg_name, 'fanout')
 
-    def _on_message(self, ch, method, props, body):
-        print(f"received: {body}")
-        self.recv_queue.put(body)
+    def _publish(self):
+        m = self.queue.get()
+        # TODO: get a serializer as a function and use it to serialize the payload to body
+        if m is not None:
+            try:
+                self.q_channel.basic_publish(
+                            exchange=self.exchg_name, 
+                            routing_key='', 
+                            body=m)
+            except Exception as e:
+                print(f'producer exception in _publish: {e}')
+        else:
+            time.sleep(0.001)
 
 
 class MqConsumer(threading.Thread):

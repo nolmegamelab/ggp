@@ -1,141 +1,106 @@
-import _pickle as pickle
-import os
-from multiprocessing import Process, Queue
-import queue
-
-import zmq
 import torch
-from tensorboardX import SummaryWriter
+import tensorboardX 
 import numpy as np
+import memory
+import env_wrappers
+import model
 
-import utils
-from memory import BatchStorage
-from env_wrappers import make_atari, wrap_atari_dqn
-from model import DuelingDQN
-from arguments import argparser
+class Actor:
 
+    def __init__(self, actor_index, actor_count, args):
+        self.actor_index = actor_index
+        self.actor_count = actor_count 
+        self.args = args
+        pass
 
-def get_environ():
-    actor_id = int(os.environ.get('ACTOR_ID', '-1'))
-    n_actors = int(os.environ.get('N_ACTORS', '-1'))
-    replay_ip = os.environ.get('REPLAY_IP', '-1')
-    learner_ip = os.environ.get('LEARNER_IP', '-1')
-    assert (actor_id != -1 and n_actors != -1)
-    assert (replay_ip != '-1' and learner_ip != '-1')
-    return actor_id, n_actors, replay_ip, learner_ip
+    def prepare(self):
+        '''
+        prepares exploring the env
+            - setup atari environment
+            - create the NN model 
+            - receives the initial NN parameters 
+        '''
+        self.writer = tensorboardX.SummaryWriter(comment="-{}-actor{}".format(self.args.env, self.actor_index))
 
+        self.env = env_wrappers.make_atari(self.args.env)
+        self.env = env_wrappers.wrap_atari_dqn(self.env, self.args)
 
-def connect_param_socket(ctx, param_socket, learner_ip, actor_id):
-    socket = ctx.socket(zmq.REQ)
-    socket.connect("tcp://{}:52002".format(learner_ip))
-    socket.send(pickle.dumps((actor_id, 1)))
-    socket.recv()
-    param_socket.connect('tcp://{}:52001'.format(learner_ip))
-    socket.send(pickle.dumps((actor_id, 2)))
-    socket.recv()
-    print("Successfully connected to learner!")
-    socket.close()
+        seed = self.args.seed + self.actor_index
+        utils.set_global_seeds(seed, use_torch=True)
 
+        self.env.seed(seed)
 
-def recv_param(learner_ip, actor_id, param_queue):
-    ctx = zmq.Context()
-    param_socket = ctx.socket(zmq.SUB)
-    param_socket.setsockopt(zmq.SUBSCRIBE, b'')
-    param_socket.setsockopt(zmq.CONFLATE, 1)
-    connect_param_socket(ctx, param_socket, learner_ip, actor_id)
-    while True:
-        data = param_socket.recv(copy=False)
-        param = pickle.loads(data)
-        param_queue.put(param)
+        # setup learning environment 
+        # - check mq 
+        # - check learner 
+        # - receive initial model parameters 
 
+        self.model = model.DuelingDQN(env)
+        self.epsilon = self.args.eps_base ** (1 + self.actor_index / (self.actor_count - 1) * self.args.eps_alpha)
+        self.storage = memory.BatchStorage(self.args.n_steps, self.args.gamma)
 
-def exploration(args, actor_id, n_actors, replay_ip, param_queue):
-    ctx = zmq.Context()
-    batch_socket = ctx.socket(zmq.DEALER)
-    batch_socket.setsockopt(zmq.IDENTITY, pickle.dumps('actor-{}'.format(actor_id)))
-    batch_socket.connect('tcp://{}:51001'.format(replay_ip))
-    outstanding = 0
+        param = param_queue.get(block=True)
+        self.model.load_state_dict(param)
 
-    writer = SummaryWriter(comment="-{}-actor{}".format(args.env, actor_id))
+        print("Received First Parameter!")
 
-    env = make_atari(args.env)
-    env = wrap_atari_dqn(env, args)
+    def explore(self):
+        outstanding = 0
 
-    seed = args.seed + actor_id
-    utils.set_global_seeds(seed, use_torch=True)
-    env.seed(seed)
+        episode_reward, episode_length, episode_idx, actor_idx = 0, 0, 0, 0
+        state = self.env.reset()
 
-    model = DuelingDQN(env)
-    epsilon = args.eps_base ** (1 + actor_id / (n_actors - 1) * args.eps_alpha)
-    storage = BatchStorage(args.n_steps, args.gamma)
+        while True:
+            action, q_values = self.model.act(torch.FloatTensor(np.array(state)), self.epsilon)
+            next_state, reward, done, _ = self.env.step(action)
+            self.storage.add(state, reward, action, done, q_values)
 
-    param = param_queue.get(block=True)
-    model.load_state_dict(param)
-    param = None
-    print("Received First Parameter!")
+            state = next_state
+            episode_reward += reward
+            episode_length += 1
+            actor_idx += 1
 
-    episode_reward, episode_length, episode_idx, actor_idx = 0, 0, 0, 0
-    state = env.reset()
-    while True:
-        action, q_values = model.act(torch.FloatTensor(np.array(state)), epsilon)
-        next_state, reward, done, _ = env.step(action)
-        storage.add(state, reward, action, done, q_values)
+            if done or episode_length == self.args.max_episode_length:
+                state = self.env.reset()
+                self.writer.add_scalar("actor/episode_reward", episode_reward, episode_idx)
+                self.writer.add_scalar("actor/episode_length", episode_length, episode_idx)
+                episode_reward = 0
+                episode_length = 0
+                episode_idx += 1
 
-        state = next_state
-        episode_reward += reward
-        episode_length += 1
-        actor_idx += 1
+            if actor_idx % self.args.update_interval == 0:
+                try:
+                    param = param_queue.get(block=False)
+                    model.load_state_dict(param)
+                    print("Updated Parameter..")
+                except queue.Empty:
+                    pass
 
-        if done or episode_length == args.max_episode_length:
-            state = env.reset()
-            writer.add_scalar("actor/episode_reward", episode_reward, episode_idx)
-            writer.add_scalar("actor/episode_length", episode_length, episode_idx)
-            episode_reward = 0
-            episode_length = 0
-            episode_idx += 1
-
-        if actor_idx % args.update_interval == 0:
-            try:
-                param = param_queue.get(block=False)
-                model.load_state_dict(param)
-                print("Updated Parameter..")
-            except queue.Empty:
-                pass
-
-        # CHECK 1. 
-        # storage가 sliding 하면서 t0_action에 대해 값을 부드럽게 갱신해야 한다. 
-        # 현재는 초기화 되기 전의 첫번째 액션에 대해서만 값이 갱신 되는 걸로 보인다. 
-        if len(storage) == args.send_interval:
-            batch, prios = storage.make_batch()
-            data = pickle.dumps((batch, prios))
-            batch, prios = None, None
-            storage.reset()
-            while outstanding >= args.max_outstanding:
-                batch_socket.recv()
-                outstanding -= 1
-            batch_socket.send(data, copy=False)
-            outstanding += 1
-            print("Sending Batch..")
+            # CHECK 1. 
+            # storage가 sliding 하면서 t0_action에 대해 값을 부드럽게 갱신해야 한다. 
+            # 현재는 초기화 되기 전의 첫번째 액션에 대해서만 값이 갱신 되는 걸로 보인다. 
+            if len(self.storage) == args.send_interval:
+                batch, prios = self.storage.make_batch()
+                data = pickle.dumps((batch, prios))
+                batch, prios = None, None
+                self.storage.reset()
+                while outstanding >= args.max_outstanding:
+                    batch_socket.recv()
+                    outstanding -= 1
+                batch_socket.send(data, copy=False)
+                outstanding += 1
+                print("Sending Batch..")
 
 
-def main():
-    actor_id, n_actors, replay_ip, learner_ip = get_environ()
-    args = argparser()
-    param_queue = Queue(maxsize=3)
-
-    procs = [
-        Process(target=exploration, args=(args, actor_id, n_actors, replay_ip, param_queue)),
-        Process(target=recv_param, args=(learner_ip, actor_id, param_queue)),
-    ]
-
-    for p in procs:
-        p.start()
-
-    for p in procs:
-        p.join()
-
-    return True
+    def finish():
+        pass
 
 if __name__ == '__main__':
-    os.environ["OMP_NUM_THREADS"] = "1"
-    main()
+    actor = Actor(1, 1, {})
+    try:
+        actor.prepare()
+        actor.explore()
+    except Exception as e:
+        pass
+    finally:
+        actor.finish()
