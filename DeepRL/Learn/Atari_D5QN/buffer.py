@@ -2,10 +2,8 @@
 # https://github.com/openai/baselines/blob/master/baselines/deepq/replay_buffer.py
 
 import random
-from collections import deque
 import operator
 import numpy as np
-
 
 class SegmentTree(object):
     def __init__(self, capacity, operation, neutral_element):
@@ -339,7 +337,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
                 obses_tp1,
                 np.array(dones))
 
-
     def _sample_proportional(self, batch_size):
         res = []
         p_total = self._it_sum.sum(0, len(self._storage) - 1)
@@ -350,71 +347,3 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             idx = self._it_sum.find_prefixsum_idx(mass)
             res.append(idx)
         return res
-
-class ActorStepStorage:
-    """
-    Storage for actors to support multi-step learning and efficient priority calculation.
-    Saving Q values with experiences enables td-error priority calculation
-    without re-calculating Q-values for each state.
-    """
-    def __init__(self, n_step, n_step_count=100, gamma=0.99):
-        """
-            n_steps - n_steps reward calculation steps
-            capacity 
-        """
-        self.n_step = n_step
-        self.capacity = n_step_count * n_step
-        self.step_deque = deque(maxlen=self.capacity)
-        self.send_deque = deque(maxlen=self.capacity)
-        self.gamma = gamma
-
-    def add(self, state, reward, action, done, q_values):
-        '''
-        calculates n-step reward  
-        '''
-
-        # when n_step is accumulated, we calculate td_error and prepares to send
-        if len(self.step_queue) == self.n_step:
-            target_step = self.step_deque[0]
-            reward_n_step = self._multi_step_reward(reward)
-            next_q_a_max = q_values.max(1)
-            reward_q_a_value = reward_n_step + (self.gamma ** self.n_step) * next_q_a_max * (1 -done) 
-            td_error = reward_q_a_value - target_step['q_a_value']
-
-            self.send_deque.append({
-                'state': target_step['state'], 
-                'reward': target_step['reward'], 
-                'action': target_step['action'], 
-                'done': target_step['done'], 
-                'q_a_value': q_values[action], 
-                'reward_n_step': reward_n_step, 
-                'td_error': td_error
-            })
-
-            self.step_deque.popleft()
-
-        # put the new step into the step queue 
-        self.step_deque.append({
-            'state': target_step['state'], 
-            'reward': target_step['reward'], 
-            'action': target_step['action'], 
-            'done': target_step['done'], 
-            'q_a_value': q_values[action]            
-        })
-
-    def get_next_send_step(self):
-        if len(self.step_deque) > 0:
-            step = self.step_deque[0]
-            self.step_deque.popleft()
-            return step
-        else: 
-            return None
-
-    def _multi_step_reward(self):
-        ret = 0.
-        for i in range(0, self.n_step):
-            ret += self.step_deque[i].reward * (self.gamma ** i)
-        return ret
-
-    def __len__(self):
-        return len(self.states)

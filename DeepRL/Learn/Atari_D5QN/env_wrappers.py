@@ -314,16 +314,16 @@ class ImageToPyTorch(gym.ObservationWrapper):
 
 
 def wrap_atari_dqn(env, args):
-    if args.episode_life:
+    if args.env_episode_life:
         env = EpisodicLifeEnv(env)
     if 'FIRE' in env.unwrapped.get_action_meanings():
         env = FireResetEnv(env)
     env = WarpFrame(env)
-    if args.scale:
+    if args.env_scale:
         env = ScaledFloatFrame(env)
-    if args.clip_rewards:
+    if args.env_clip_rewards:
         env = ClipRewardEnv(env)
     env = ImageToPyTorch(env)
-    if args.frame_stack:
+    if args.env_frame_stack:
         env = TorchFrameStack(env, 4)
     return env
