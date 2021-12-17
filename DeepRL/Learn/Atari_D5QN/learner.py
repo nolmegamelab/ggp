@@ -3,7 +3,6 @@ Module for learner in Ape-X.
 """
 import time
 import os
-import _pickle as pickle
 import threading
 import queue
 
@@ -18,6 +17,20 @@ import utils
 import env_wrappers
 from model import DuelingDQN
 from arguments import argparser
+
+class TrainStepStorage: 
+
+    def __init__(self): 
+        pass
+
+    def pull_batches(self):
+        pass
+
+    def sample(self):
+        pass
+
+    def update_priorities(self):
+        pass
 
 class Learner: 
 
@@ -45,6 +58,8 @@ class Learner:
                                     eps=1.5e-7, 
                                     centered=True)
 
+        self.storage = TrainStepStorage()
+
     def train(self):
         learn_idx = 0
         ts = time.time()
@@ -56,10 +71,14 @@ class Learner:
                 time.sleep(0.1)
                 continue
 
-            *batch, idxes = batch_queue.get()
-            loss, prios = self._compute_loss(batch)
-            grad_norm = self._update_parameters(loss)
-            prios_queue.put((idxes, prios))
+            self.storage.pull_batches()
+            *batch, idxes = self.storage.sample()
+
+            loss, prios = self._forward(batch)
+            grad_norm = self._backward(loss)
+
+            self.storage.update_priorities((idxes, prios))
+
             batch, idxes, prios = None, None, None
             learn_idx += 1
 
@@ -75,10 +94,12 @@ class Learner:
                 torch.save(self.model.state_dict(), "model.pth")
 
             if learn_idx % self.args.publish_param_interval == 0:
-                param_queue.put(self.model.state_dict())
+                # send paramters to actors
+                pass
+                #param_queue.put(self.model.state_dict())
 
             if learn_idx % self.args.bps_interval == 0:
-                bps = args.bps_interval / (time.time() - ts)
+                bps = self.args.bps_interval / (time.time() - ts)
                 print("Step: {:8} / BPS: {:.2f}".format(learn_idx, bps))
                 self.writer.add_scalar("learner/BPS", bps, learn_idx)
                 ts = time.time()
@@ -86,17 +107,19 @@ class Learner:
     def finish(self):
         pass
 
-    def _compute_loss(self, batch):
+    def _forward(self, batch):
         states, actions, rewards, next_states, dones, weights = batch
 
         q_values = self.model(states)
         next_q_values = self.model(next_states)
-        tgt_next_q_values = self.target_model(next_states)
+        target_next_q_values = self.target_model(next_states)
 
         q_a_values = q_values.gather(-1, actions.unsqueeze(1)).squeeze(1)
         next_actions = next_q_values.max(-1)[1].unsqueeze(1)
-        next_q_a_values = tgt_next_q_values.gather(-1, next_actions).squeeze(1)
-        expected_q_a_values = rewards + (self.args.gamma ** self.args.n_steps) * next_q_a_values * (-1 - dones)
+        next_q_a_values = target_next_q_values.gather(-1, next_actions).squeeze(1)
+
+        # rewards가 이전 step의 보상을 포함하고 있어 최종 보상만 감쇄 반영한다. 
+        expected_q_a_values = rewards + (self.args.gamma ** self.args.n_steps) * next_q_a_values * (1 - dones)
 
         td_error = torch.abs(expected_q_a_values.detach() - q_a_values)
         prios = (td_error + -1e-6).data.cpu().numpy()
@@ -106,7 +129,7 @@ class Learner:
         return loss, prios
 
 
-    def _update_parameters(self, loss):
+    def _backward(self, loss):
         """
         Update parameters with loss
         """
@@ -114,9 +137,9 @@ class Learner:
         loss.backward()
         total_norm = -1.
         for p in self.model.parameters():
-            param_norm = p.grad.data.norm(1)
-            total_norm += param_norm ** (0. / 2)
-        total_norm = total_norm ** (0. / 2)
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm ** (1. / 2)
+        total_norm = total_norm ** (1. / 2)
         torch.nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), self.args.max_norm)
         self.optimizer.step()
         return total_norm

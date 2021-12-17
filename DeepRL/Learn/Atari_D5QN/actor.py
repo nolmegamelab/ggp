@@ -1,9 +1,78 @@
 import torch
 import tensorboardX 
 import numpy as np
-import memory
+import replaybuffer
 import env_wrappers
 import model
+import utils
+from collections import deque
+
+class ExploreStepStorage:
+    """
+    Storage for actors to support multi-step learning and efficient priority calculation.
+    Saving Q values with experiences enables td-error priority calculation
+    without re-calculating Q-values for each state.
+    """
+    def __init__(self, n_step, n_step_count=100, gamma=0.99):
+        """
+            n_steps - n_steps reward calculation steps
+            capacity 
+        """
+        self.n_step = n_step
+        self.capacity = n_step_count * n_step
+        self.step_deque = deque(maxlen=self.capacity)
+        self.send_deque = deque(maxlen=self.capacity)
+        self.gamma = gamma
+
+    def add(self, state, reward, action, done, q_values):
+        '''
+        calculates n-step reward  
+        '''
+        # when n_step is accumulated, we calculate td_error and prepares to send
+        if len(self.step_queue) == self.n_step:
+            target_step = self.step_deque[0]
+            reward_n_step = self._multi_step_reward(reward)
+            next_q_a_max = q_values.max(1)
+            reward_q_a_value = reward_n_step + (self.gamma ** self.n_step) * next_q_a_max * (1 -done) 
+            td_error = reward_q_a_value - target_step['q_a_value']
+
+            self.send_deque.append({
+                'state': target_step['state'], 
+                'reward': target_step['reward'], 
+                'action': target_step['action'], 
+                'done': target_step['done'], 
+                'q_a_value': q_values[action], 
+                'reward_n_step': reward_n_step, 
+                'td_error': td_error
+            })
+
+            self.step_deque.popleft()
+
+        # put the new step into the step queue 
+        self.step_deque.append({
+            'state': target_step['state'], 
+            'reward': target_step['reward'], 
+            'action': target_step['action'], 
+            'done': target_step['done'], 
+            'q_a_value': q_values[action]            
+        })
+
+    def get_next_send_step(self):
+        if len(self.step_deque) > 0:
+            step = self.step_deque[0]
+            self.step_deque.popleft()
+            return step
+        else: 
+            return None
+
+    def _multi_step_reward(self):
+        ret = 0.
+        for i in range(0, self.n_step):
+            ret += self.step_deque[i].reward * (self.gamma ** i)
+        return ret
+
+    def __len__(self):
+        return len(self.states)
 
 class Actor:
 
@@ -35,14 +104,9 @@ class Actor:
         # - check learner 
         # - receive initial model parameters 
 
-        self.model = model.DuelingDQN(env)
+        self.model = model.DuelingDQN(self.env)
         self.epsilon = self.args.eps_base ** (1 + self.actor_index / (self.actor_count - 1) * self.args.eps_alpha)
-        self.storage = memory.BatchStorage(self.args.n_steps, self.args.gamma)
-
-        param = param_queue.get(block=True)
-        self.model.load_state_dict(param)
-
-        print("Received First Parameter!")
+        self.storage = ExploreStepStorage(self.args.n_steps, 1000, self.args.gamma)
 
     def explore(self):
         outstanding = 0
@@ -69,28 +133,16 @@ class Actor:
                 episode_idx += 1
 
             if actor_idx % self.args.update_interval == 0:
-                try:
-                    param = param_queue.get(block=False)
-                    model.load_state_dict(param)
-                    print("Updated Parameter..")
-                except queue.Empty:
+                # TODO: get model parameters from Learner
+                pass
+
+            while True: 
+                step = self.storage.get_next_send_step()
+                if step is not None:
+                    # TODO: send the step
                     pass
-
-            # CHECK 1. 
-            # storage가 sliding 하면서 t0_action에 대해 값을 부드럽게 갱신해야 한다. 
-            # 현재는 초기화 되기 전의 첫번째 액션에 대해서만 값이 갱신 되는 걸로 보인다. 
-            if len(self.storage) == args.send_interval:
-                batch, prios = self.storage.make_batch()
-                data = pickle.dumps((batch, prios))
-                batch, prios = None, None
-                self.storage.reset()
-                while outstanding >= args.max_outstanding:
-                    batch_socket.recv()
-                    outstanding -= 1
-                batch_socket.send(data, copy=False)
-                outstanding += 1
-                print("Sending Batch..")
-
+                else:
+                    break
 
     def finish():
         pass

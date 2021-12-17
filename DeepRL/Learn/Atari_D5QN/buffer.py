@@ -204,6 +204,14 @@ class ReplayBuffer(object):
 
 
 class PrioritizedReplayBuffer(ReplayBuffer):
+    """
+        PrioritizedReplayBuffer merged with CustomizedPrioritizedReplayBuffer class
+        1. Edited add method to receive priority as input. This enables to enter priority when adding sample.
+           This efficiently merges two methods (add, update_priorities) which enables less shared memory lock.
+        2. If we save obs as numpy.array, this will decompress LazyFrame which leads to memory explosion.
+           To achieve memory efficiency, It is necessary to remove np.array(obs) from _encode_sample.
+    """
+
     def __init__(self, size, alpha):
         """Create Prioritized Replay buffer.
         Parameters
@@ -214,6 +222,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         alpha: float
             how much prioritization is used
             (0 - no prioritization, 1 - full prioritization)
+
         See Also
         --------
         ReplayBuffer.__init__
@@ -230,22 +239,19 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self._it_min = MinSegmentTree(it_capacity)
         self._max_priority = 1.0
 
-    def add(self, *args, **kwargs):
-        """See ReplayBuffer.store_effect"""
+    def add(self, state, action, reward, next_state, done, priority):
         idx = self._next_idx
-        super().add(*args, **kwargs)
-        self._it_sum[idx] = self._max_priority ** self._alpha
-        self._it_min[idx] = self._max_priority ** self._alpha
+        data = (state, action, reward, next_state, done)
 
-    def _sample_proportional(self, batch_size):
-        res = []
-        p_total = self._it_sum.sum(0, len(self._storage) - 1)
-        every_range_len = p_total / batch_size
-        for i in range(batch_size):
-            mass = random.random() * every_range_len + i * every_range_len
-            idx = self._it_sum.find_prefixsum_idx(mass)
-            res.append(idx)
-        return res
+        if self._next_idx >= len(self._storage):
+            self._storage.append(data)
+        else:
+            self._storage[self._next_idx] = data
+        self._next_idx = (self._next_idx + 1) % self._maxsize
+
+        self._it_sum[idx] = priority ** self._alpha
+        self._it_min[idx] = priority ** self._alpha
+        self._max_priority = max(self._max_priority, priority)
 
     def sample(self, batch_size, beta):
         """Sample a batch of experiences.
@@ -317,32 +323,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
             self._max_priority = max(self._max_priority, priority)
 
-
-class CustomPrioritizedReplayBuffer(PrioritizedReplayBuffer):
-    """
-    Customized PrioritizedReplayBuffer class
-    1. Edited add method to receive priority as input. This enables to enter priority when adding sample.
-    This efficiently merges two methods (add, update_priorities) which enables less shared memory lock.
-    2. If we save obs as numpy.array, this will decompress LazyFrame which leads to memory explosion.
-    To achieve memory efficiency, It is necessary to remove np.array(obs) from _encode_sample.
-    """
-    def __init__(self, size, alpha):
-        super(CustomPrioritizedReplayBuffer, self).__init__(size, alpha)
-
-    def add(self, state, action, reward, next_state, done, priority):
-        idx = self._next_idx
-        data = (state, action, reward, next_state, done)
-
-        if self._next_idx >= len(self._storage):
-            self._storage.append(data)
-        else:
-            self._storage[self._next_idx] = data
-        self._next_idx = (self._next_idx + 1) % self._maxsize
-
-        self._it_sum[idx] = priority ** self._alpha
-        self._it_min[idx] = priority ** self._alpha
-        self._max_priority = max(self._max_priority, priority)
-
     def _encode_sample(self, idxes):
         obses_t, actions, rewards, obses_tp1, dones = [], [], [], [], []
         for i in idxes:
@@ -360,88 +340,80 @@ class CustomPrioritizedReplayBuffer(PrioritizedReplayBuffer):
                 np.array(dones))
 
 
-class BatchStorage:
+    def _sample_proportional(self, batch_size):
+        res = []
+        p_total = self._it_sum.sum(0, len(self._storage) - 1)
+        every_range_len = p_total / batch_size
+        for i in range(batch_size):
+            # PER paper : uniform sampling over 
+            mass = random.random() * every_range_len + i * every_range_len
+            idx = self._it_sum.find_prefixsum_idx(mass)
+            res.append(idx)
+        return res
+
+class ActorStepStorage:
     """
     Storage for actors to support multi-step learning and efficient priority calculation.
     Saving Q values with experiences enables td-error priority calculation
     without re-calculating Q-values for each state.
     """
-    def __init__(self, n_steps, gamma=0.99):
-        self.state_deque = deque(maxlen=n_steps)
-        self.action_deque = deque(maxlen=n_steps)
-        self.reward_deque = deque(maxlen=n_steps)
-        self.q_values_deque = deque(maxlen=n_steps)
-        self.states = []
-        self.actions = []
-        self.rewards = []
-        self.next_states = []
-        self.dones = []
-        self.q_values = []
-        self.next_q_values = []
-
-        self.n_steps = n_steps
+    def __init__(self, n_step, n_step_count=100, gamma=0.99):
+        """
+            n_steps - n_steps reward calculation steps
+            capacity 
+        """
+        self.n_step = n_step
+        self.capacity = n_step_count * n_step
+        self.step_deque = deque(maxlen=self.capacity)
+        self.send_deque = deque(maxlen=self.capacity)
         self.gamma = gamma
 
     def add(self, state, reward, action, done, q_values):
-        if len(self.state_deque) == self.n_steps or done:
-            t0_state = self.state_deque[0]
-            t0_reward = self.multi_step_reward(*self.reward_deque, reward)
-            t0_action = self.action_deque[0]
-            t0_q_values = self.q_values_deque[0]
-            tp_n_state = state
-            tp_n_q_values = q_values
-            done = np.float32(done)
-            self.states.append(t0_state)
-            self.actions.append(t0_action)
-            self.rewards.append(t0_reward)
-            self.next_states.append(tp_n_state)
-            self.dones.append(done)
-            self.q_values.append(t0_q_values)
-            self.next_q_values.append(tp_n_q_values)
+        '''
+        calculates n-step reward  
+        '''
 
-        if done:
-            self.state_deque.clear()
-            self.reward_deque.clear()
-            self.action_deque.clear()
-        else:
-            self.state_deque.append(state)
-            self.reward_deque.append(reward)
-            self.action_deque.append(action)
-            self.q_values_deque.append(q_values)
+        # when n_step is accumulated, we calculate td_error and prepares to send
+        if len(self.step_queue) == self.n_step:
+            target_step = self.step_deque[0]
+            reward_n_step = self._multi_step_reward(reward)
+            next_q_a_max = q_values.max(1)
+            reward_q_a_value = reward_n_step + (self.gamma ** self.n_step) * next_q_a_max * (1 -done) 
+            td_error = reward_q_a_value - target_step['q_a_value']
 
-    def reset(self):
-        self.states = []
-        self.actions = []
-        self.rewards = []
-        self.next_states = []
-        self.dones = []
-        self.q_values = []
-        self.next_q_values = []
+            self.send_deque.append({
+                'state': target_step['state'], 
+                'reward': target_step['reward'], 
+                'action': target_step['action'], 
+                'done': target_step['done'], 
+                'q_a_value': q_values[action], 
+                'reward_n_step': reward_n_step, 
+                'td_error': td_error
+            })
 
-    def compute_priorities(self):
-        # TODO: Should I seperate this method from BatchStorage class?
-        actions = np.array(self.actions, copy=False)
-        rewards = np.array(self.rewards, copy=False)
-        dones = np.array(self.dones, copy=False)
-        q_values = np.stack(self.q_values)
-        next_q_values = np.stack(self.next_q_values)
+            self.step_deque.popleft()
 
-        q_a_values = q_values[(range(len(q_values)), actions)]
-        next_q_a_values = next_q_values.max(1)
-        expected_q_a_values = rewards + (self.gamma ** self.n_steps) * next_q_a_values * (1 - dones)
-        td_error = expected_q_a_values - q_a_values
-        prios = np.abs(td_error) + 1e-6
-        return prios
+        # put the new step into the step queue 
+        self.step_deque.append({
+            'state': target_step['state'], 
+            'reward': target_step['reward'], 
+            'action': target_step['action'], 
+            'done': target_step['done'], 
+            'q_a_value': q_values[action]            
+        })
 
-    def make_batch(self):
-        prios = self.compute_priorities()
-        batch = [self.states, self.actions, self.rewards, self.next_states, self.dones]
-        return batch, prios
+    def get_next_send_step(self):
+        if len(self.step_deque) > 0:
+            step = self.step_deque[0]
+            self.step_deque.popleft()
+            return step
+        else: 
+            return None
 
-    def multi_step_reward(self, *rewards):
+    def _multi_step_reward(self):
         ret = 0.
-        for idx, reward in enumerate(rewards):
-            ret += reward * (self.gamma ** idx)
+        for i in range(0, self.n_step):
+            ret += self.step_deque[i].reward * (self.gamma ** i)
         return ret
 
     def __len__(self):

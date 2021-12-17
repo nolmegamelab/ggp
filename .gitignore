@@ -1,2 +1,3 @@
 events.out.*
 /DeepRL/Learn/Torch/data/FashionMNIST
+__pycache__/
