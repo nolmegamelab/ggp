@@ -8,5 +8,5 @@ Ape-X와 R2D3의 Demonstration 아이디어를 추가하고 Double Dueling Deep 
 
 https://github.com/younggyoseo/Ape-X 의 코드에 기초하여 진행하면서 
 Ape-X의 보다 정확한 구현을 찾고 epsilon decay를 추가하여 
-지속적으로 학습하면서 적은 액터들로도 탐색이 더 잘  되도록 하려고 한다. 
+지속적으로 학습하면서 적은 액터들로도 탐색이 되도록 하려고 한다. 
 

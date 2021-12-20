@@ -2,6 +2,7 @@
 Module for DQN Model in Ape-X.
 """
 import random
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -13,10 +14,10 @@ class DuelingDQN(nn.Module):
     """
     def __init__(self, env):
         super(DuelingDQN, self).__init__()
-
+        #self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cpu')
         self.input_shape = env.observation_space.shape
         self.num_actions = env.action_space.n
-
         self.flatten = Flatten()
 
         self.features = nn.Sequential(
@@ -56,13 +57,15 @@ class DuelingDQN(nn.Module):
         """
         with torch.no_grad():
             state = state.unsqueeze(0)
+            state = state.to(self.device)
+            #q_values = torch.tensor([[0, 0, 0, 0]])
             q_values = self.forward(state)
 
             if random.random() > epsilon:
                 action = q_values.max(1)[1].item()
             else:
                 action = random.randrange(self.num_actions)
-        return action, q_values.numpy()[0]
+        return action, q_values.cpu().numpy()[0]
 
 
 class Flatten(nn.Module):

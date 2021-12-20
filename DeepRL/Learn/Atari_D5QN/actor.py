@@ -1,11 +1,16 @@
-import torch
-import tensorboardX 
-import numpy as np
 import collections 
+import numpy as np
+import tensorboardX 
+import time
+import torch
+import traceback
+
 import env_wrappers
 import model
-import utils
+import mq
+import msgpack
 import options
+import utils
 
 class ExploreStepStorage:
     """
@@ -35,18 +40,19 @@ class ExploreStepStorage:
             next_q_a_max = q_values.max()
             reward_q_a_value = reward_n_step + (self.gamma ** (self.n_step+1)) * next_q_a_max * (1 -done) 
             td_error = reward_q_a_value - target_step['q_a_value']
+            next_state = self.step_deque[1]['state']
 
             # Ape-X paper compute priority while exploring, but it seems to be 
             # more accurate to calculate on the collector using PriorityReplayBuffer 
             # and samples on that priority. The collector, then, can send the batches 
             # to the Learner.
+            # NOTE: tolist() converts a numpy array to a python list including element type conversion 
             self.send_deque.append({
-                'state': target_step['state'], 
+                'state': np.array(target_step['state']).tolist(), 
+                'next_state': np.array(next_state).tolist(), 
                 'reward': target_step['reward'], 
                 'action': target_step['action'], 
                 'done': target_step['done'], 
-                'q_a_value': q_values[action], 
-                'reward_n_step': reward_n_step, 
                 'td_error': td_error
             })
 
@@ -60,6 +66,7 @@ class ExploreStepStorage:
             'done': done,
             'q_a_value': q_values[action]            
         })
+
         if reward > 0 :
             print(f'reward: {reward}, action: {action}')
 
@@ -92,7 +99,8 @@ class Actor:
         self.actor_index = actor_index
         self.actor_count = actor_count 
         self.args = args
-        pass
+        self.mq_collector = mq.MqProducer('d5qn_collector')
+        self.mq_parameter = mq.MqConsumer('d5qn_parameter')
 
     def prepare(self):
         '''
@@ -101,10 +109,20 @@ class Actor:
             - create the NN model 
             - receives the initial NN parameters 
         '''
+
+        #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cpu')
+        print(f'device: {device}')
+        # setting the number of threads to 1 solves high cpu utilization
+        torch.set_num_threads(1)
+
         self.writer = tensorboardX.SummaryWriter(comment="-{}-actor{}".format(self.args.env, self.actor_index))
 
         self.env = env_wrappers.make_atari(self.args.env)
         self.env = env_wrappers.wrap_atari_dqn(self.env, self.args)
+
+        self.mq_collector.start()
+        self.mq_parameter.start()
 
         seed = self.args.seed + self.actor_index
         utils.set_global_seeds(seed, use_torch=True)
@@ -117,6 +135,7 @@ class Actor:
         # - receive initial model parameters 
 
         self.model = model.DuelingDQN(self.env)
+        self.model.to(device)
         div = max(1, self.actor_count - 1)
         self.epsilon = self.args.eps_base ** (1 + self.actor_index / div * self.args.eps_alpha)
         self.storage = ExploreStepStorage(self.args.n_step, 1000, self.args.gamma)
@@ -133,7 +152,7 @@ class Actor:
             next_state, reward, done, _ = self.env.step(action)
             self.storage.add(state, reward, action, done, q_values)
 
-            if self.args.render_env: 
+            if self.args.env_render: 
                 self.env.render()
 
             state = next_state
@@ -154,11 +173,12 @@ class Actor:
             while True: 
                 step = self.storage.get_next_send_step()
                 if step is not None:
-                    # TODO: send the step
-                    pass
+                    m = msgpack.packb(step)
+                    self.mq_collector.publish(m)
                 else:
                     break
-            
+
+            time.sleep(0.0001)
 
     def finish(self):
         pass
@@ -171,5 +191,6 @@ if __name__ == '__main__':
         actor.explore()
     except Exception as e:
         print(f'exception: {e}')
+        traceback.print_exc()
     finally:
         actor.finish()

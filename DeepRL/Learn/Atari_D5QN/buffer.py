@@ -238,18 +238,29 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self._max_priority = 1.0
 
     def add(self, state, action, reward, next_state, done, priority):
+
+        if priority < 0 : priority = 0
+
         idx = self._next_idx
         data = (state, action, reward, next_state, done)
 
-        if self._next_idx >= len(self._storage):
-            self._storage.append(data)
+        if len(self._storage) < self._maxsize:
+            if self._next_idx < len(self._storage):
+                self._storage[self._next_idx] = data
+            else:
+                self._storage.append(data)
         else:
-            self._storage[self._next_idx] = data
+            self._storage[self._next_idx] = data # overwrite
+
         self._next_idx = (self._next_idx + 1) % self._maxsize
 
-        self._it_sum[idx] = priority ** self._alpha
-        self._it_min[idx] = priority ** self._alpha
-        self._max_priority = max(self._max_priority, priority)
+        try:
+            self._it_sum[idx] = priority ** self._alpha
+            self._it_min[idx] = priority ** self._alpha
+            self._max_priority = max(self._max_priority, priority)
+        except Exception as ex: 
+            print(f"priority: {priority}, index: {idx}")
+            print(f"Exception: {ex}")
 
     def sample(self, batch_size, beta):
         """Sample a batch of experiences.
@@ -289,15 +300,18 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         weights = []
         p_min = self._it_min.min() / self._it_sum.sum()
+        p_min = max(p_min, 0.00001)
         max_weight = (p_min * len(self._storage)) ** (-beta)
 
         for idx in idxes:
             p_sample = self._it_sum[idx] / self._it_sum.sum()
             weight = (p_sample * len(self._storage)) ** (-beta)
             weights.append(weight / max_weight)
+
         weights = np.array(weights)
         encoded_sample = self._encode_sample(idxes)
-        return tuple(list(encoded_sample) + [weights, idxes])
+
+        return tuple(encoded_sample + [weights, idxes])
 
     def update_priorities(self, idxes, priorities):
         """Update priorities of sampled transitions.
@@ -322,20 +336,11 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             self._max_priority = max(self._max_priority, priority)
 
     def _encode_sample(self, idxes):
-        obses_t, actions, rewards, obses_tp1, dones = [], [], [], [], []
+        batch = [] 
         for i in idxes:
             data = self._storage[i]
-            obs_t, action, reward, obs_tp1, done = data
-            obses_t.append(obs_t)
-            actions.append(np.array(action, copy=False))
-            rewards.append(np.array(reward, copy=False))
-            obses_tp1.append(obs_tp1)
-            dones.append(np.array(done, copy=False))
-        return (obses_t,
-                np.array(actions),
-                np.array(rewards),
-                obses_tp1,
-                np.array(dones))
+            batch.append(data)
+        return data
 
     def _sample_proportional(self, batch_size):
         res = []
