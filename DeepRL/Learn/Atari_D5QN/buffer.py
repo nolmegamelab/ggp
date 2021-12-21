@@ -258,7 +258,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self._it_min[idx] = priority ** self._alpha
         self._max_priority = max(self._max_priority, priority)
 
-    def sample(self, batch_size, beta, wire=False):
+    @profile
+    def sample(self, batch_size, beta):
         """Sample a batch of experiences.
         compared to ReplayBuffer.sample
         it also returns importance weights and indices
@@ -304,9 +305,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             weight = (p_sample * len(self._storage)) ** (-beta)
             weights.append(weight / max_weight)
 
-        if not wire:
-            weights = np.array(weights)
-        encoded_sample = self._encode_sample(indices, wire)
+        weights = np.array(weights)
+        encoded_sample = self._encode_sample(indices)
 
         return tuple(list(encoded_sample) + [weights, indices])
 
@@ -332,41 +332,26 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
             self._max_priority = max(self._max_priority, priority)
 
-    def _encode_sample(self, indices, wire=False):
+    @profile
+    def _encode_sample(self, indices):
         states, actions, rewards, next_states, dones, priorities = [], [], [], [], [], []
         for i in indices:
             data = self._storage[i]
             state, action, reward, next_state, done, priority = data
-            if wire:
-                states.append(state.tolist())
-                actions.append(action)
-                rewards.append(reward)
-                next_states.append(next_state.tolist())
-                dones.append(done)
-                priorities.append(priority)
-            else:
-                states.append(state)
-                actions.append(np.array(action, copy=False))
-                rewards.append(np.array(reward, copy=False))
-                next_states.append(next_state)
-                dones.append(np.array(done, copy=False))
-                priorities.append(priority)
+            states.append(state)
+            actions.append(action)
+            rewards.append(reward)
+            next_states.append(next_state)
+            dones.append(done)
+            priorities.append(priority)
         # end for indices
 
-        if wire:
-            return (states,
-                    actions,
-                    rewards,
-                    next_states,
-                    dones, 
-                    priorities)
-        else:
-            return (states,
-                    np.array(actions),
-                    np.array(rewards),
-                    next_states,
-                    np.array(dones), 
-                    np.array(priorities))
+        return (np.array(states),
+                np.array(actions),
+                np.array(rewards),
+                np.array(next_states),
+                np.array(dones), 
+                np.array(priorities))
     # end _encode_sample
 
     def _sample_proportional(self, batch_size):

@@ -6,6 +6,7 @@ import torch
 from tensorboardX import SummaryWriter
 import msgpack
 import traceback
+import msgpack_numpy as m
 
 import buffer
 import env_wrappers
@@ -43,10 +44,10 @@ class TrainStepStorage:
 
             for state, action, reward, next_state, done, weight, indice, priority in z :
                 self.memory.add(
-                    torch.tensor(state), 
+                    state, 
                     action, 
                     reward, 
-                    torch.tensor(next_state), 
+                    next_state, 
                     done, 
                     priority)
             
@@ -74,6 +75,7 @@ class Learner:
         self.opts = opts
 
     def prepare(self):
+        m.patch()
         self.env = env_wrappers.make_atari(self.opts.env)
         self.env = env_wrappers.wrap_atari_dqn(self.env, self.opts)
 

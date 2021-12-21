@@ -4,6 +4,8 @@ import time
 import traceback
 import gc
 import torch
+import numpy as np
+import msgpack_numpy as m 
 
 import options
 import mq
@@ -22,9 +24,11 @@ class Collector:
         self.mq_learner = mq.MqProducer('d5qn_learner')
 
     def prepare(self):
+        m.patch()
         self.mq_collector.start()
         self.mq_learner.start()
 
+    @profile
     def process(self): 
         loop = 0
         recv = 0
@@ -36,10 +40,10 @@ class Collector:
                 step = msgpack.unpackb(m)
                 priority = step['td_error'] + self.opts.min_priority
                 self.buffer.add(
-                    torch.tensor(step['state']), 
+                    np.array(step['state']), 
                     step['action'], 
                     step['reward'], 
-                    torch.tensor(step['next_state']), 
+                    np.array(step['next_state']), 
                     step['done'], 
                     priority)
                 recv = recv + 1
@@ -48,16 +52,20 @@ class Collector:
                 m = self.mq_collector.consume()
 
             if len(self.buffer) >= self.opts.sample_begin_size: 
-                # samples and forwards up to current_recv_count
-                for i in range(0, current_recv_count):
-                    batch = self.buffer.sample(self.opts.batch_size, self.opts.beta, wire=True)
+                sample_count = max(2, current_recv_count//self.opts.batch_size)
+                sample_count = 1000
+                for i in range(0, sample_count):
+                    batch = self.buffer.sample(self.opts.batch_size, self.opts.beta)
                     m = msgpack.packb(batch)
                     self.mq_learner.publish(m)
                     samples += 1
                     print(f'samples: {samples}')
+                    batch = None
 
             time.sleep(0.001) # to prevent 100% CPU usage
             loop = loop + 1
+            if loop % 1000 == 0:
+                gc.collect()
 
     def finish(self):
         self.finished = True

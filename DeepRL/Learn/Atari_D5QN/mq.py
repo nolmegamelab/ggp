@@ -118,7 +118,7 @@ class MqConsumer(threading.Thread):
 
     def _on_message(self, ch, method, props, body):
         # TODO: logging
-        print(f"received: {self.message_index}")
+        #print(f"received: {self.message_index}")
         self.message_index = self.message_index+1
         self.queue.put(body)
         if self.closed: 

@@ -4,7 +4,7 @@ class Options:
         self.actor_id = 1
         self.actor_count = 1
         self.seed = 1122 
-        self.n_step = 256
+        self.n_step = 256           # paper : 8 
         self.gamma = 0.99 
         self.env = "BreakoutNoFrameskip-v4" 
         self.env_scale = 1
@@ -21,7 +21,7 @@ class Options:
         self.replay_buffer_size = 2000000
         self.sample_begin_size = 1000
         self.learning_begin_size = 1000
-        self.batch_size = 512 
+        self.batch_size = 32                    # paper : 512
         self.learning_rate = 6.25e-5 
         self.learner_storage_capacity = 200000
         self.max_norm = 40.0 

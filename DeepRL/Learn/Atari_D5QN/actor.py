@@ -178,7 +178,7 @@ class Actor:
                 else:
                     break
 
-            time.sleep(0.0001)
+            time.sleep(0.01)
 
     def finish(self):
         pass
