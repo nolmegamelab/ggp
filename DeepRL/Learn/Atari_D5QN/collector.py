@@ -23,36 +23,39 @@ class Collector:
 
     def prepare(self):
         self.mq_collector.start()
-        #self.mq_learner.start()
+        self.mq_learner.start()
 
     def process(self): 
         loop = 0
         recv = 0
+        samples = 0
         while True:
-            print(f'before consume')
+            current_recv_count = 0
             m = self.mq_collector.consume()
             while m is not None:
-                print(f'before unpack')
                 step = msgpack.unpackb(m)
-                print(f'before add')
+                priority = step['td_error'] + self.opts.min_priority
                 self.buffer.add(
                     torch.tensor(step['state']), 
                     step['action'], 
                     step['reward'], 
                     torch.tensor(step['next_state']), 
                     step['done'], 
-                    step['td_error'])
+                    priority)
                 recv = recv + 1
+                current_recv_count = current_recv_count + 1 
                 print(f'recv: {recv}')
                 m = self.mq_collector.consume()
 
             if len(self.buffer) >= self.opts.sample_begin_size: 
-                pass
-                #batch = self.buffer.sample(self.opts.batch_size, self.opts.beta)
-                #m = msgpack.packb(batch)
-                #self.mq_learner.publish(m)
+                # samples and forwards up to current_recv_count
+                for i in range(0, current_recv_count):
+                    batch = self.buffer.sample(self.opts.batch_size, self.opts.beta, wire=True)
+                    m = msgpack.packb(batch)
+                    self.mq_learner.publish(m)
+                    samples += 1
+                    print(f'samples: {samples}')
 
-            print(f'before sleep')
             time.sleep(0.001) # to prevent 100% CPU usage
             loop = loop + 1
 

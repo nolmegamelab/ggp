@@ -12,10 +12,9 @@ class DuelingDQN(nn.Module):
     Dueling Network Architectures for Deep Reinforcement Learning
     https://arxiv.org/abs/1511.06581
     """
-    def __init__(self, env):
+    def __init__(self, env, device='cpu'):
         super(DuelingDQN, self).__init__()
-        #self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.device = torch.device('cpu')
+        self.device = device
         self.input_shape = env.observation_space.shape
         self.num_actions = env.action_space.n
         self.flatten = Flatten()
@@ -58,7 +57,6 @@ class DuelingDQN(nn.Module):
         with torch.no_grad():
             state = state.unsqueeze(0)
             state = state.to(self.device)
-            #q_values = torch.tensor([[0, 0, 0, 0]])
             q_values = self.forward(state)
 
             if random.random() > epsilon:

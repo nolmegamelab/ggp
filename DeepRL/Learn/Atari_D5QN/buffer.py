@@ -165,9 +165,9 @@ class ReplayBuffer(object):
             self._storage[self._next_idx] = data
         self._next_idx = (self._next_idx + 1) % self._maxsize
 
-    def _encode_sample(self, idxes):
+    def _encode_sample(self, indices):
         obses_t, actions, rewards, obses_tp1, dones = [], [], [], [], []
-        for i in idxes:
+        for i in indices:
             data = self._storage[i]
             obs_t, action, reward, obs_tp1, done = data
             obses_t.append(np.array(obs_t, copy=False))
@@ -197,8 +197,8 @@ class ReplayBuffer(object):
             done_mask[i] = 1 if executing act_batch[i] resulted in
             the end of an episode and 0 otherwise.
         """
-        idxes = [random.randint(0, len(self._storage) - 1) for _ in range(batch_size)]
-        return self._encode_sample(idxes)
+        indices = [random.randint(0, len(self._storage) - 1) for _ in range(batch_size)]
+        return self._encode_sample(indices)
 
 
 class PrioritizedReplayBuffer(ReplayBuffer):
@@ -210,11 +210,11 @@ class PrioritizedReplayBuffer(ReplayBuffer):
            To achieve memory efficiency, It is necessary to remove np.array(obs) from _encode_sample.
     """
 
-    def __init__(self, size, alpha):
+    def __init__(self, capacity, alpha):
         """Create Prioritized Replay buffer.
         Parameters
         ----------
-        size: int
+        capacity: int
             Max number of transitions to store in the buffer. When the buffer
             overflows the old memories are dropped.
         alpha: float
@@ -225,12 +225,12 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         --------
         ReplayBuffer.__init__
         """
-        super(PrioritizedReplayBuffer, self).__init__(size)
+        super(PrioritizedReplayBuffer, self).__init__(capacity)
         assert alpha >= 0
         self._alpha = alpha
 
         it_capacity = 1
-        while it_capacity < size:
+        while it_capacity < capacity:
             it_capacity *= 2
 
         self._it_sum = SumSegmentTree(it_capacity)
@@ -242,7 +242,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         if priority < 0 : priority = 0
 
         idx = self._next_idx
-        data = (state, action, reward, next_state, done)
+        data = (state, action, reward, next_state, done, priority)
 
         if len(self._storage) < self._maxsize:
             if self._next_idx < len(self._storage):
@@ -254,18 +254,14 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
         self._next_idx = (self._next_idx + 1) % self._maxsize
 
-        try:
-            self._it_sum[idx] = priority ** self._alpha
-            self._it_min[idx] = priority ** self._alpha
-            self._max_priority = max(self._max_priority, priority)
-        except Exception as ex: 
-            print(f"priority: {priority}, index: {idx}")
-            print(f"Exception: {ex}")
+        self._it_sum[idx] = priority ** self._alpha
+        self._it_min[idx] = priority ** self._alpha
+        self._max_priority = max(self._max_priority, priority)
 
-    def sample(self, batch_size, beta):
+    def sample(self, batch_size, beta, wire=False):
         """Sample a batch of experiences.
         compared to ReplayBuffer.sample
-        it also returns importance weights and idxes
+        it also returns importance weights and indices
         of sampled experiences.
         Parameters
         ----------
@@ -290,44 +286,45 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         weights: np.array
             Array of shape (batch_size,) and dtype np.float32
             denoting importance weight of each sampled transition
-        idxes: np.array
+        indices: np.array
             Array of shape (batch_size,) and dtype np.int32
             idexes in buffer of sampled experiences
         """
         assert beta > 0
 
-        idxes = self._sample_proportional(batch_size)
+        indices = self._sample_proportional(batch_size)
 
         weights = []
         p_min = self._it_min.min() / self._it_sum.sum()
-        p_min = max(p_min, 0.00001)
+        p_min = max(p_min, 0.0001)
         max_weight = (p_min * len(self._storage)) ** (-beta)
 
-        for idx in idxes:
+        for idx in indices:
             p_sample = self._it_sum[idx] / self._it_sum.sum()
             weight = (p_sample * len(self._storage)) ** (-beta)
             weights.append(weight / max_weight)
 
-        weights = np.array(weights)
-        encoded_sample = self._encode_sample(idxes)
+        if not wire:
+            weights = np.array(weights)
+        encoded_sample = self._encode_sample(indices, wire)
 
-        return tuple(encoded_sample + [weights, idxes])
+        return tuple(list(encoded_sample) + [weights, indices])
 
-    def update_priorities(self, idxes, priorities):
+    def update_priorities(self, indices, priorities):
         """Update priorities of sampled transitions.
-        sets priority of transition at index idxes[i] in buffer
+        sets priority of transition at index indices[i] in buffer
         to priorities[i].
         Parameters
         ----------
-        idxes: [int]
-            List of idxes of sampled transitions
+        indices: [int]
+            List of indices of sampled transitions
         priorities: [float]
             List of updated priorities corresponding to
-            transitions at the sampled idxes denoted by
-            variable `idxes`.
+            transitions at the sampled indices denoted by
+            variable `indices`.
         """
-        assert len(idxes) == len(priorities)
-        for idx, priority in zip(idxes, priorities):
+        assert len(indices) == len(priorities)
+        for idx, priority in zip(indices, priorities):
             assert priority > 0
             assert 0 <= idx < len(self._storage)
             self._it_sum[idx] = priority ** self._alpha
@@ -335,19 +332,49 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
             self._max_priority = max(self._max_priority, priority)
 
-    def _encode_sample(self, idxes):
-        batch = [] 
-        for i in idxes:
+    def _encode_sample(self, indices, wire=False):
+        states, actions, rewards, next_states, dones, priorities = [], [], [], [], [], []
+        for i in indices:
             data = self._storage[i]
-            batch.append(data)
-        return data
+            state, action, reward, next_state, done, priority = data
+            if wire:
+                states.append(state.tolist())
+                actions.append(action)
+                rewards.append(reward)
+                next_states.append(next_state.tolist())
+                dones.append(done)
+                priorities.append(priority)
+            else:
+                states.append(state)
+                actions.append(np.array(action, copy=False))
+                rewards.append(np.array(reward, copy=False))
+                next_states.append(next_state)
+                dones.append(np.array(done, copy=False))
+                priorities.append(priority)
+        # end for indices
+
+        if wire:
+            return (states,
+                    actions,
+                    rewards,
+                    next_states,
+                    dones, 
+                    priorities)
+        else:
+            return (states,
+                    np.array(actions),
+                    np.array(rewards),
+                    next_states,
+                    np.array(dones), 
+                    np.array(priorities))
+    # end _encode_sample
 
     def _sample_proportional(self, batch_size):
         res = []
         p_total = self._it_sum.sum(0, len(self._storage) - 1)
         every_range_len = p_total / batch_size
         for i in range(batch_size):
-            # PER paper : uniform sampling over 
+            # PER paper : uniform sampling over priority range 
             mass = random.random() * every_range_len + i * every_range_len
             idx = self._it_sum.find_prefixsum_idx(mass)
             res.append(idx)

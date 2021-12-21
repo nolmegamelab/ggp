@@ -17,10 +17,13 @@ class Options:
         self.eps_alpha = 1.0
         self.alpha = 0.6 
         self.beta = 0.4
-        self.replay_buffer_size = 20000
+        self.min_priority = 1e-6
+        self.replay_buffer_size = 2000000
         self.sample_begin_size = 1000
+        self.learning_begin_size = 1000
         self.batch_size = 512 
         self.learning_rate = 6.25e-5 
+        self.learner_storage_capacity = 200000
         self.max_norm = 40.0 
         self.target_update_interval = 2500 
         self.publish_param_interval = 25 
