@@ -258,7 +258,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self._it_min[idx] = priority ** self._alpha
         self._max_priority = max(self._max_priority, priority)
 
-    @profile
     def sample(self, batch_size, beta):
         """Sample a batch of experiences.
         compared to ReplayBuffer.sample
@@ -332,7 +331,6 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
             self._max_priority = max(self._max_priority, priority)
 
-    @profile
     def _encode_sample(self, indices):
         states, actions, rewards, next_states, dones, priorities = [], [], [], [], [], []
         for i in indices:

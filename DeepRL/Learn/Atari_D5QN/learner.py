@@ -1,6 +1,8 @@
 """
 Module for learner in Ape-X.
 """
+import multiprocessing
+import os
 import time
 import torch
 from tensorboardX import SummaryWriter
@@ -186,6 +188,8 @@ class Learner:
         return self.storage.check_learning_condition() 
 
 if __name__ == '__main__': 
+    os.environ["OMP_NUM_THREADS"] = "1"
+    multiprocessing.set_start_method("spawn")
     opts = options.Options()
     learner = Learner(1, opts)
     try:

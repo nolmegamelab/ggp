@@ -1,5 +1,7 @@
+import multiprocessing
 import buffer
 import msgpack
+import os
 import time
 import traceback
 import gc
@@ -20,15 +22,14 @@ class Collector:
         self.opts = opts
         self.finished = False
         self.buffer = buffer.PrioritizedReplayBuffer(opts.replay_buffer_size, opts.alpha) 
-        self.mq_collector = mq.MqConsumer('d5qn_collector')
-        self.mq_learner = mq.MqProducer('d5qn_learner')
+        self.mq_collector = mq.MqConsumer('d5qn_collector', 1000000)
+        self.mq_learner = mq.MqProducer('d5qn_learner', 1000000)
 
     def prepare(self):
         m.patch()
         self.mq_collector.start()
         self.mq_learner.start()
 
-    @profile
     def process(self): 
         loop = 0
         recv = 0
@@ -53,7 +54,7 @@ class Collector:
 
             if len(self.buffer) >= self.opts.sample_begin_size: 
                 sample_count = max(2, current_recv_count//self.opts.batch_size)
-                sample_count = 1000
+                sample_count = 10
                 for i in range(0, sample_count):
                     batch = self.buffer.sample(self.opts.batch_size, self.opts.beta)
                     m = msgpack.packb(batch)
@@ -71,6 +72,8 @@ class Collector:
         self.finished = True
 
 if __name__ == '__main__':
+    os.environ["OMP_NUM_THREADS"] = "1"
+    multiprocessing.set_start_method('spawn')
     opts = options.Options()
     collector = Collector(opts)
     try:

@@ -1,11 +1,10 @@
+import multiprocessing
+from numpy.core.arrayprint import DatetimeFormat
 import pika 
-import threading
 import queue
 import time
-import msgpack
-import collections
 
-class MqProducer(threading.Thread):
+class MqProducer:
     '''
     MqProducer joins exchange with exchg_name and publish messages to the exchange. 
     The exchange is fanout to broadcast to all consumers joined to that exchange.
@@ -13,17 +12,15 @@ class MqProducer(threading.Thread):
         - self.daemon makes this thread exit when the main thread exits
     '''
 
-    def __init__(self, exchg_name):
-        super(MqProducer, self).__init__()
-        self.daemon = True
+    def __init__(self, exchg_name, size):
         self.exchg_name = exchg_name
-        self.queue = queue.Queue() 
         self.closed = False
-        
+
+    def start(self):
         self._initMq()
 
     def publish(self, m):
-        self.queue.put(m)
+        self._publish(m)
 
     def close(self):
         '''
@@ -32,10 +29,8 @@ class MqProducer(threading.Thread):
         self.closed = True
         self.q_conn.close()
 
-    def run(self):
-        while not self.closed:
-            self._publish()
-        print('MqProducer exit')
+    def join(self): 
+        self.process.join()
 
     def _initMq(self):
         self.q_conn = pika.BlockingConnection(
@@ -46,9 +41,7 @@ class MqProducer(threading.Thread):
 
         print(f'MqProducer initialized {self.exchg_name}')
 
-    def _publish(self):
-        m = self.queue.get() # blocking
-
+    def _publish(self, m):
         # TODO: get a serializer as a function and use it to serialize the payload to body
         if m is not None:
             try:
@@ -58,11 +51,9 @@ class MqProducer(threading.Thread):
                             body=m)
             except Exception as e:
                 print(f'producer exception in _publish: {e}')
-        else:
-            time.sleep(0.001)
 
 
-class MqConsumer(threading.Thread):
+class MqConsumer:
     '''
     MqConsumer joins exchange with exchg_name and consumes messages from the exchange. 
     The exchange is fanout to broadcast to all consumers joined to that exchange.
@@ -70,13 +61,11 @@ class MqConsumer(threading.Thread):
         - self.daemon makes this thread exit when the main thread exits
     '''
 
-    def __init__(self, exchg_name):
-        super(MqConsumer, self).__init__()
-        self.daemon = True
+    def __init__(self, exchg_name, size):
         self.exchg_name = exchg_name
-        self.queue = queue.Queue()
+        self.process = multiprocessing.Process(target=self.run, daemon=True)
+        self.queue = multiprocessing.Queue(maxsize=size)
         self.closed = False
-        self._initMq()
         self.message_index = 0
 
     def consume(self, blocking=False):
@@ -85,12 +74,20 @@ class MqConsumer(threading.Thread):
                 return None
         return self.queue.get()
 
+    def start(self): 
+        self.process.start()
+
     def close(self):
         self.closed = True
         try:
-            self.q_conn.close()
+            pass
+            #different interpreter creates q_conn
+            #self.q_conn.close()
         except Exception as e:
             print(f'MqConsumer exception in close(): {e}')
+
+    def join(self): 
+        self.process.join()
 
     def _initMq(self):
         self.q_conn = pika.BlockingConnection(
@@ -105,6 +102,7 @@ class MqConsumer(threading.Thread):
                             queue=self.q_result.method.queue)
 
     def run(self):
+        self._initMq()
         self.q_channel.basic_consume(
                             self.q_result.method.queue,
                             self._on_message, 

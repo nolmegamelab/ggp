@@ -1,5 +1,7 @@
 import collections 
 import numpy as np
+import multiprocessing
+import os
 import tensorboardX 
 import time
 import torch
@@ -99,8 +101,8 @@ class Actor:
         self.actor_index = actor_index
         self.actor_count = actor_count 
         self.args = args
-        self.mq_collector = mq.MqProducer('d5qn_collector')
-        self.mq_parameter = mq.MqConsumer('d5qn_parameter')
+        self.mq_collector = mq.MqProducer('d5qn_collector', 1000000)
+        self.mq_parameter = mq.MqConsumer('d5qn_parameter', 1000000)
 
     def prepare(self):
         '''
@@ -178,12 +180,14 @@ class Actor:
                 else:
                     break
 
-            time.sleep(0.01)
+            time.sleep(0.001)
 
     def finish(self):
         pass
 
 if __name__ == '__main__':
+    os.environ["OMP_NUM_THREADS"] = "1"
+    multiprocessing.set_start_method('spawn')
     opts = options.Options()
     actor = Actor(1, 1, opts)
     try:
