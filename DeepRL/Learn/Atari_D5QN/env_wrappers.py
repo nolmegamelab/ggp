@@ -319,8 +319,7 @@ def wrap_atari_dqn(env, args):
     if 'FIRE' in env.unwrapped.get_action_meanings():
         env = FireResetEnv(env)
     env = WarpFrame(env)
-    if args.env_scale:
-        env = ScaledFloatFrame(env)
+    # removed scaled float frame. uint8 is 4 times memory efficient.
     if args.env_clip_rewards:
         env = ClipRewardEnv(env)
     env = ImageToPyTorch(env)

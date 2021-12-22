@@ -3,8 +3,10 @@ Module for learner in Ape-X.
 """
 import multiprocessing
 import os
+import pickle
 import time
 import torch
+import numpy as np
 from tensorboardX import SummaryWriter
 import msgpack
 import traceback
@@ -20,8 +22,8 @@ import utils
 class TrainStepStorage: 
 
     def __init__(self, opts): 
-        self.mq_learner = mq.MqConsumer('d5qn_learner')
-        self.mq_parameter = mq.MqProducer('d5qn_parameter')
+        self.mq_learner = mq.MqConsumer('d5qn_learner', 1000000)
+        self.mq_parameter = mq.MqProducer('d5qn_parameter', 1000000)
         self.mq_learner.start()
         self.mq_parameter.start()
         self.opts = opts
@@ -44,7 +46,7 @@ class TrainStepStorage:
                 batch[6], 
                 batch[7])
 
-            for state, action, reward, next_state, done, weight, indice, priority in z :
+            for state, action, reward, next_state, done, priority, weight, indice in z :
                 self.memory.add(
                     state, 
                     action, 
@@ -60,11 +62,11 @@ class TrainStepStorage:
         b = self.memory.sample(self.opts.batch_size, self.opts.beta)
         return b
 
-    def update_priorities(self, indices, priorities):
-        self.memory.update_priorities(indices, priorities)
-
     def check_learning_condition(self):
         return len(self.memory) > self.opts.learning_begin_size
+
+    def send_parameters(self, m):
+        self.mq_parameter.publish(m)
 
 
 class Learner: 
@@ -87,6 +89,8 @@ class Learner:
 
         self.model = model.DuelingDQN(self.env).to(self.device)
         self.target_model = model.DuelingDQN(self.env).to(self.device)
+
+        self.model.load_state_dict(torch.load("model.pth"))
         self.target_model.load_state_dict(self.model.state_dict())
 
         self.writer = SummaryWriter(comment="-{}-learner".format(self.opts.env))
@@ -120,7 +124,9 @@ class Learner:
             self._backward(loss)
 
             # NOTE: local priority change only (different from the Ape-X paper)
-            self.storage.update_priorities((indices, priorities))
+            # local update is not n-step td error. therefore, it is removed 
+            # instead, actor model update works in the similar manner (hope)
+            # self.storage.update_priorities(indices, priorities)
 
             batch, indices, priorities = None, None, None
             learning_loop_count += 1
@@ -136,9 +142,9 @@ class Learner:
                 torch.save(self.model.state_dict(), "model.pth")
 
             if learning_loop_count % self.opts.publish_param_interval == 0:
-                # send paramters to actors
-                pass
-                #param_queue.put(self.model.state_dict())
+                params = self.model.state_dict()
+                m = pickle.dumps(params)
+                self.storage.send_parameters(m)
 
             if learning_loop_count % self.opts.bps_interval == 0:
                 bps = self.opts.bps_interval / (time.time() - ts)
@@ -152,22 +158,36 @@ class Learner:
     def _forward(self, batch):
         states, actions, rewards, next_states, dones, prorities, weights = batch
 
-        q_values = self.model(states)
-        next_q_values = self.model(next_states)
-        target_next_q_values = self.target_model(next_states)
+        states_float = np.array(states).astype(np.float32) / 255.0
+        next_states_float = np.array(next_states).astype(np.float32) / 255.0
 
-        q_a_values = q_values.gather(-1, actions.unsqueeze(1)).squeeze(1)
+        # convert back to float from uint8 
+        states_tensor = torch.FloatTensor(states_float).to(self.device)
+        next_states_tensor = torch.FloatTensor(next_states_float).to(self.device)
+
+        q_values = self.model(states_tensor)
+        next_q_values = self.model(next_states_tensor)
+        target_next_q_values = self.target_model(next_states_tensor)
+
+        actions_tensor = torch.from_numpy(actions)
+        actions_tensor = actions_tensor.type(torch.int64).unsqueeze(1).to(self.device)
+
+        # decrypt following 
+        q_a_values = q_values.gather(-1, actions_tensor).squeeze(1)
         next_actions = next_q_values.max(-1)[1].unsqueeze(1)
         next_q_a_values = target_next_q_values.gather(-1, next_actions).squeeze(1)
 
         # rewards가 이전 step의 보상을 포함하고 있어 최종 보상만 감쇄 반영한다. 
-        expected_q_a_values = rewards + (self.opts.gamma ** self.opts.n_steps) * next_q_a_values * (1 - dones)
+        expected_q_a_values = rewards + self.opts.gamma * next_q_a_values.detach().cpu().numpy() * (1 - dones)
+        expected_q_a_values = torch.from_numpy(expected_q_a_values).to(self.device)
 
-        td_error = torch.abs(expected_q_a_values.detach() - q_a_values)
-        priorities = (td_error + -1e-6).data.cpu().numpy()
+        td_error = torch.abs(expected_q_a_values - q_a_values)
 
         loss = torch.where(td_error < -1, 0.5 * td_error ** 2, td_error - 0.5)
-        loss = (loss * weights).mean()
+        weights_tensor = torch.from_numpy(weights).to(self.device)
+        loss = (loss * weights_tensor).mean()
+
+        priorities = (td_error + -1e-6).clone().detach().cpu().numpy()
         return loss, priorities
 
 

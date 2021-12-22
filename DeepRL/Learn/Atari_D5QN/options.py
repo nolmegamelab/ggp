@@ -13,8 +13,9 @@ class Options:
         self.env_episode_life = 1 
         self.env_render = False 
         self.max_episode_length = 50000
-        self.eps_base = 0.4 
-        self.eps_alpha = 1.0
+        self.epsilon_base = 0.9 
+        self.epsilon_alpha = 1.0
+        self.epsilon_decay = 0.000001
         self.alpha = 0.6 
         self.beta = 0.4
         self.min_priority = 1e-6

@@ -2,6 +2,7 @@ import collections
 import numpy as np
 import multiprocessing
 import os
+import pickle
 import tensorboardX 
 import time
 import torch
@@ -11,6 +12,7 @@ import env_wrappers
 import model
 import mq
 import msgpack
+import msgpack_numpy as msgnum
 import options
 import utils
 
@@ -50,8 +52,8 @@ class ExploreStepStorage:
             # to the Learner.
             # NOTE: tolist() converts a numpy array to a python list including element type conversion 
             self.send_deque.append({
-                'state': np.array(target_step['state']).tolist(), 
-                'next_state': np.array(next_state).tolist(), 
+                'state': target_step['state'], 
+                'next_state': next_state, 
                 'reward': target_step['reward'], 
                 'action': target_step['action'], 
                 'done': target_step['done'], 
@@ -68,9 +70,6 @@ class ExploreStepStorage:
             'done': done,
             'q_a_value': q_values[action]            
         })
-
-        if reward > 0 :
-            print(f'reward: {reward}, action: {action}')
 
     def get_next_send_step(self):
         if len(self.send_deque) > 0:
@@ -111,6 +110,7 @@ class Actor:
             - create the NN model 
             - receives the initial NN parameters 
         '''
+        msgnum.patch()
 
         #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         device = torch.device('cpu')
@@ -139,18 +139,19 @@ class Actor:
         self.model = model.DuelingDQN(self.env)
         self.model.to(device)
         div = max(1, self.actor_count - 1)
-        self.epsilon = self.args.eps_base ** (1 + self.actor_index / div * self.args.eps_alpha)
+        self.epsilon = self.args.epsilon_base ** (1 + self.actor_index / div * self.args.epsilon_alpha)
+        self.epsilon_decay = self.args.epsilon_decay
         self.storage = ExploreStepStorage(self.args.n_step, 1000, self.args.gamma)
 
     def explore(self):
         """
         explores the environment and forward steps (transitions) to the collector
         """
-        episode_reward, episode_length, episode_idx, actor_idx = 0, 0, 0, 0
+        episode_reward, episode_length, episode_idx, param_age = 0, 0, 0, 0
         state = self.env.reset()
 
         while True:
-            action, q_values = self.model.act(torch.FloatTensor(np.array(state)), self.epsilon)
+            action, q_values = self.model.act(torch.FloatTensor(state), self.epsilon)
             next_state, reward, done, _ = self.env.step(action)
             self.storage.add(state, reward, action, done, q_values)
 
@@ -160,18 +161,19 @@ class Actor:
             state = next_state
             episode_reward += reward
             episode_length += 1
-            actor_idx += 1
+            self.epsilon = max(0, self.epsilon-self.epsilon_decay)
+            self.epsilon = max(0.001, self.epsilon)
 
             if done or episode_length == self.args.max_episode_length:
                 state = self.env.reset()
                 self.writer.add_scalar("actor/episode_reward", episode_reward, episode_idx)
                 self.writer.add_scalar("actor/episode_length", episode_length, episode_idx)
+                print(f"episode: {episode_idx:5.0f}, epsilon: {self.epsilon:1.5f}, reward: {episode_reward:5.1f}, length: {episode_length:5d}, age: {param_age:5d}")
                 episode_reward = 0
                 episode_length = 0
                 episode_idx += 1
 
-            # TODO: get model parameters from Learner
-
+            # publish step to the collector
             while True: 
                 step = self.storage.get_next_send_step()
                 if step is not None:
@@ -179,6 +181,13 @@ class Actor:
                     self.mq_collector.publish(m)
                 else:
                     break
+
+            # get model parameters from Learner
+            m = self.mq_parameter.consume()
+            if m is not None:
+                params = pickle.loads(m)
+                self.model.load_state_dict(params)
+                param_age += 1
 
             time.sleep(0.001)
 

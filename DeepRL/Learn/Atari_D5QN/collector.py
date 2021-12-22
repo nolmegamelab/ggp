@@ -41,10 +41,10 @@ class Collector:
                 step = msgpack.unpackb(m)
                 priority = step['td_error'] + self.opts.min_priority
                 self.buffer.add(
-                    np.array(step['state']), 
+                    step['state'], 
                     step['action'], 
                     step['reward'], 
-                    np.array(step['next_state']), 
+                    step['next_state'], 
                     step['done'], 
                     priority)
                 recv = recv + 1
@@ -54,13 +54,12 @@ class Collector:
 
             if len(self.buffer) >= self.opts.sample_begin_size: 
                 sample_count = max(2, current_recv_count//self.opts.batch_size)
-                sample_count = 10
                 for i in range(0, sample_count):
                     batch = self.buffer.sample(self.opts.batch_size, self.opts.beta)
                     m = msgpack.packb(batch)
                     self.mq_learner.publish(m)
                     samples += 1
-                    print(f'samples: {samples}')
+                    print(f'smpl: {samples}')
                     batch = None
 
             time.sleep(0.001) # to prevent 100% CPU usage
