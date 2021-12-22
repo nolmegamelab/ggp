@@ -19,25 +19,60 @@ class DuelingDQN(nn.Module):
         self.num_actions = env.action_space.n
         self.flatten = Flatten()
 
+        conv2d_1 = nn.Conv2d(self.input_shape[0], 32, kernel_size=8, stride=4)
+        init(conv2d_1)
+        conv2d_1.weight.data.fill_(0.0)
+        conv2d_1.bias.data.fill_(0.0)
+
+        conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        init(conv2d_2)
+        conv2d_2.weight.data.fill_(0.0)
+        conv2d_2.bias.data.fill_(0.0)
+
+        conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        init(conv2d_3)
+        conv2d_3.weight.data.fill_(0.0)
+        conv2d_3.bias.data.fill_(0.0)
+
         self.features = nn.Sequential(
-            init(nn.Conv2d(self.input_shape[0], 32, kernel_size=8, stride=4)),
-            nn.ReLU(),
-            init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
-            nn.ReLU(),
-            init(nn.Conv2d(64, 64, kernel_size=3, stride=1)),
+            conv2d_1, 
+            nn.ReLU(), 
+            conv2d_2, 
+            nn.ReLU(), 
+            conv2d_3, 
             nn.ReLU()
         )
 
-        self.advantage = nn.Sequential(
-            init(nn.Linear(self._feature_size(), 512)),
+        linear_1 = nn.Linear(self._feature_size(), 512)
+        init(linear_1)
+        linear_1.weight.data.fill_(0.0)
+        linear_1.bias.data.fill_(0.0)
+
+        linear_2 = nn.Linear(512, self.num_actions)
+        init(linear_2)
+        linear_2.weight.data.fill_(0.0)
+        linear_2.bias.data.fill_(0.0)
+
+        self.advantage = nn.Sequential( 
+            linear_1,
             nn.ReLU(),
-            init(nn.Linear(512, self.num_actions))
+            linear_2
         )
 
+        linear_3 = nn.Linear(self._feature_size(), 512)
+        init(linear_3)
+        linear_3.weight.data.fill_(0.0)
+        linear_3.bias.data.fill_(0.0)
+
+        linear_4 = nn.Linear(512, 1)
+        init(linear_4)
+        linear_4.weight.data.fill_(0.0)
+        linear_4.bias.data.fill_(0.0)
+
         self.value = nn.Sequential(
-            init(nn.Linear(self._feature_size(), 512)),
+            linear_3,
             nn.ReLU(),
-            init(nn.Linear(512, 1))
+            linear_4
         )
 
     def forward(self, x):
@@ -55,7 +90,7 @@ class DuelingDQN(nn.Module):
         Return action, max_q_value for given state
         """
         with torch.no_grad():
-            state = state.unsqueeze(0)
+            state = state.unsqueeze(0) # make it in a batch format [1, 1, 84, 84]
             state = state.to(self.device)
             q_values = self.forward(state)
 

@@ -97,17 +97,18 @@ class Learner:
 
         # optimizer = torch.optim.Adam(model.parameters(), opts.lr)
 
-        self.optimizer = torch.optim.RMSprop(self.model.parameters(), 
-                                    self.opts.learning_rate,
-                                    alpha=0.95, 
-                                    eps=1.5e-7, 
-                                    centered=True)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), 
+                                    lr=self.opts.learning_rate)
+                                    #alpha=0.95, 
+                                    #eps=1.5e-7, 
+                                    #centered=True)
 
         self.storage = TrainStepStorage(self.opts)
 
     def train(self):
         learning_loop_count = 0
         ts = time.time()
+        sum_loss = 0
 
         while True:
             self.storage.pull_batches()
@@ -122,6 +123,8 @@ class Learner:
 
             loss, priorities = self._forward(batch)
             self._backward(loss)
+
+            sum_loss += loss
 
             # NOTE: local priority change only (different from the Ape-X paper)
             # local update is not n-step td error. therefore, it is removed 
@@ -148,25 +151,30 @@ class Learner:
 
             if learning_loop_count % self.opts.bps_interval == 0:
                 bps = self.opts.bps_interval / (time.time() - ts)
-                print("Step: {:8} / BPS: {:.2f}".format(learning_loop_count, bps))
+                print("step: {:8}, bps: {:.2f}, loss: {:3.3f}".format(learning_loop_count, bps, sum_loss / self.opts.bps_interval))
                 self.writer.add_scalar("learner/BPS", bps, learning_loop_count)
                 ts = time.time()
+                sum_loss = 0
 
     def finish(self):
         pass
 
     def _forward(self, batch):
-        states, actions, rewards, next_states, dones, prorities, weights = batch
+        states, actions, rewards, next_states, dones, priors, weights = batch
 
         states_float = np.array(states).astype(np.float32) / 255.0
         next_states_float = np.array(next_states).astype(np.float32) / 255.0
+        rewards_tensor = torch.FloatTensor(rewards).to(self.device)
+        dones_tensor = torch.FloatTensor(dones).to(self.device)
 
         # convert back to float from uint8 
         states_tensor = torch.FloatTensor(states_float).to(self.device)
         next_states_tensor = torch.FloatTensor(next_states_float).to(self.device)
 
+        with torch.no_grad():
+            next_q_values = self.model(next_states_tensor)
+
         q_values = self.model(states_tensor)
-        next_q_values = self.model(next_states_tensor)
         target_next_q_values = self.target_model(next_states_tensor)
 
         actions_tensor = torch.from_numpy(actions)
@@ -178,12 +186,15 @@ class Learner:
         next_q_a_values = target_next_q_values.gather(-1, next_actions).squeeze(1)
 
         # rewards가 이전 step의 보상을 포함하고 있어 최종 보상만 감쇄 반영한다. 
-        expected_q_a_values = rewards + self.opts.gamma * next_q_a_values.detach().cpu().numpy() * (1 - dones)
-        expected_q_a_values = torch.from_numpy(expected_q_a_values).to(self.device)
+        expected_q_a_values = rewards_tensor + self.opts.gamma * next_q_a_values * (1 - dones_tensor)
+        expected_q_a_values = expected_q_a_values.to(self.device)
 
+        #  후버로스 계산
         td_error = torch.abs(expected_q_a_values - q_a_values)
+        quadratic_part = torch.clip(td_error, 0.0, 1.0)
+        linear_part = td_error - quadratic_part
 
-        loss = torch.where(td_error < -1, 0.5 * td_error ** 2, td_error - 0.5)
+        loss = 0.5 * quadratic_part ** 2 + linear_part
         weights_tensor = torch.from_numpy(weights).to(self.device)
         loss = (loss * weights_tensor).mean()
 
@@ -197,7 +208,7 @@ class Learner:
         """
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), self.opts.max_norm)
+        #torch.nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), self.opts.max_norm)
         self.optimizer.step()
         # NOTE: removed total norm calculation
 

@@ -37,7 +37,6 @@ class ExploreStepStorage:
         '''
         calculates n-step reward  
         '''
-        state = state._force()
         # when n_step is accumulated, we calculate td_error and prepares to send
         if len(self.step_deque) == self.n_step:
             target_step = self.step_deque[0]
@@ -138,65 +137,40 @@ class Actor:
         # - receive initial model parameters 
 
         self.model = model.DuelingDQN(self.env)
+        self.model.load_state_dict(torch.load("model.pth"))
         self.model.to(device)
+        div = max(1, self.actor_count - 1)
+        self.epsilon = 0
+        #self.epsilon_decay = self.args.epsilon_decay
+        #self.storage = ExploreStepStorage(self.args.n_step, 1000, self.args.gamma)
 
-    def explore(self, min_epsilon=0.001):
+    def explore(self):
         """
         explores the environment and forward steps (transitions) to the collector
         """
-        div = max(1, self.actor_count - 1)
-        self.epsilon = self.args.epsilon_base ** (1 + self.actor_index / div * self.args.epsilon_alpha)
-        self.epsilon_decay = self.args.epsilon_decay
-        self.storage = ExploreStepStorage(self.args.n_step, 1000, self.args.gamma)
         episode_reward, episode_length, episode_idx, param_age = 0, 0, 0, 0
         state = self.env.reset()
-        sum_q_value = 0
 
         while True:
             action, q_values = self.model.act(torch.FloatTensor(state), self.epsilon)
             next_state, reward, done, _ = self.env.step(action)
-            self.storage.add(state, reward, action, done, q_values)
 
-            if self.args.env_render: 
-                self.env.render()
+            self.env.render()
 
-            sum_q_value += q_values[action]
             state = next_state
             episode_reward += reward
             episode_length += 1
-            self.epsilon = max(0, self.epsilon-self.epsilon_decay)
-            self.epsilon = max(0.001, self.epsilon)
 
             if done or episode_length == self.args.max_episode_length:
                 state = self.env.reset()
                 self.writer.add_scalar("actor/episode_reward", episode_reward, episode_idx)
                 self.writer.add_scalar("actor/episode_length", episode_length, episode_idx)
-                print(f"episode: {episode_idx:5.0f}, epsilon: {self.epsilon:1.5f}, reward: {episode_reward:5.1f}, length: {episode_length:5d}, age: {param_age:5d}, q: {sum_q_value/episode_length:4.3f}")
+                print(f"episode: {episode_idx:5.0f}, epsilon: {self.epsilon:1.5f}, reward: {episode_reward:5.1f}, length: {episode_length:5d}, age: {param_age:5d}")
                 episode_reward = 0
                 episode_length = 0
                 episode_idx += 1
-                sum_q_value = 0
 
-            # publish step to the collector
-            while True: 
-                step = self.storage.get_next_send_step()
-                if step is not None:
-                    m = msgpack.packb(step)
-                    self.mq_collector.publish(m)
-                else:
-                    break
-
-            # get model parameters from Learner
-            m = self.mq_parameter.consume()
-            if m is not None:
-                params = pickle.loads(m)
-                self.model.load_state_dict(params)
-                param_age += 1
-
-            time.sleep(0.001)
-
-            if self.epsilon <= min_epsilon:
-                break;
+            time.sleep(0.1)
 
     def finish(self):
         pass
@@ -208,9 +182,7 @@ if __name__ == '__main__':
     actor = Actor(1, 1, opts)
     try:
         actor.prepare()
-        for i in range(0, 10000):
-            print(f'loop: {i}')
-            actor.explore(0.01)
+        actor.explore()
     except Exception as e:
         print(f'exception: {e}')
         traceback.print_exc()
