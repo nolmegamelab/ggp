@@ -90,7 +90,7 @@ class Learner:
         self.model = model.DuelingDQN(self.env).to(self.device)
         self.target_model = model.DuelingDQN(self.env).to(self.device)
 
-        self.model.load_state_dict(torch.load("model.pth"))
+        #self.model.load_state_dict(torch.load("model.pth"))
         self.target_model.load_state_dict(self.model.state_dict())
 
         self.writer = SummaryWriter(comment="-{}-learner".format(self.opts.env))
@@ -195,8 +195,9 @@ class Learner:
         linear_part = td_error - quadratic_part
 
         loss = 0.5 * quadratic_part ** 2 + linear_part
-        weights_tensor = torch.from_numpy(weights).to(self.device)
-        loss = (loss * weights_tensor).mean()
+        loss = loss.mean()
+        #weights_tensor = torch.from_numpy(weights).to(self.device)
+        #loss = (loss * weights_tensor).mean()
 
         priorities = (td_error + -1e-6).clone().detach().cpu().numpy()
         return loss, priorities

@@ -56,6 +56,7 @@ class ExploreStepStorage:
                 'state': target_step['state'], 
                 'next_state': next_state, 
                 'reward': target_step['reward'], 
+                #'reward': reward_q_a_value,
                 'action': target_step['action'], 
                 'done': target_step['done'], 
                 'td_error': td_error
@@ -210,7 +211,7 @@ if __name__ == '__main__':
         actor.prepare()
         for i in range(0, 10000):
             print(f'loop: {i}')
-            actor.explore(0.01)
+            actor.explore(0.002)
     except Exception as e:
         print(f'exception: {e}')
         traceback.print_exc()
