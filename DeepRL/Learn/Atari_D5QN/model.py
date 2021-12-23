@@ -33,8 +33,8 @@ class DQN(nn.Module):
             nn.ReLU(),
             nn.Linear(512, self.num_actions)
         )
-        self.conv.apply(self.init_weights)
-        self.fc.apply(self.init_weights)
+        #self.conv.apply(self.init_weights)
+        #self.fc.apply(self.init_weights)
 
     def init_weights(self, m):
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):

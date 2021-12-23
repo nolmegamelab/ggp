@@ -127,7 +127,7 @@ class Actor:
         # - receive initial model parameters 
 
         self.model = model.DQN(self.env, self.device)
-        self.model.load_state_dict(torch.load("model_local.pth"))
+        self.model.load_state_dict(torch.load("model_local_dqn.pth"))
         self.target_model = model.DQN(self.env, self.device)
         self.model.to(self.device)
         self.target_model.to(self.device)
@@ -193,7 +193,7 @@ class Actor:
 
             if learning_loop_count % self.opts.save_interval == 0:
                 print("Saving Model..")
-                torch.save(self.model.state_dict(), "model_local.pth")
+                torch.save(self.model.state_dict(), "model_local_dqn.pth")
 
             time.sleep(0.001)
 
@@ -229,16 +229,8 @@ class Actor:
         q_values = self.model(states_tensor)
         q_a_values = q_values.gather(-1, actions_tensor).squeeze(1)
 
-        #  후버로스 계산
         td_error = torch.abs(expected_q_a_values - q_a_values)
-        #quadratic_part = torch.clip(td_error, 0.0, 1.0)
-        #linear_part = td_error - quadratic_part
-
-        #loss = 0.5 * quadratic_part ** 2 + linear_part
-        #loss = loss.mean()
         loss = torch.nn.MSELoss()(expected_q_a_values, q_a_values)
-        #weights_tensor = torch.from_numpy(weights).to(self.device)
-        #loss = (loss * weights_tensor).mean()
 
         priorities = (td_error + -1e-6).clone().detach().cpu().numpy()
         return loss, priorities

@@ -26,7 +26,7 @@ class Options:
         self.learning_rate = 6.25e-4            # 6.25e-5 
         self.learner_storage_capacity = 100000
         self.max_grad = 10.0 
-        self.target_update_interval = 1024
+        self.target_update_interval = 5000
         self.publish_param_interval = 25 
         self.save_interval = 5000 
         self.bps_interval = 100 
