@@ -13,9 +13,9 @@ class Options:
         self.env_episode_life = 1 
         self.env_render = False
         self.max_episode_length = 50000
-        self.epsilon_base = 0.9 
+        self.epsilon_base = 0.99 
         self.epsilon_alpha = 1.0
-        self.epsilon_decay = 0.00001
+        self.epsilon_decay = 0.0001
         self.alpha = 0.6 
         self.beta = 0.4
         self.min_priority = 1e-6
@@ -25,8 +25,8 @@ class Options:
         self.batch_size = 32                    # paper : 512
         self.learning_rate = 6.25e-4            # 6.25e-5 
         self.learner_storage_capacity = 100000
-        self.max_norm = 40.0 
-        self.target_update_interval = 2500 
+        self.max_grad = 10.0 
+        self.target_update_interval = 1024
         self.publish_param_interval = 25 
         self.save_interval = 5000 
         self.bps_interval = 100 

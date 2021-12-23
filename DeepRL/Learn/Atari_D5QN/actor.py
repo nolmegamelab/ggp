@@ -138,7 +138,7 @@ class Actor:
         # - check learner 
         # - receive initial model parameters 
 
-        self.model = model.DuelingDQN(self.env)
+        self.model = model.DQN(self.env)
         self.model.to(device)
 
     def explore(self, min_epsilon=0.001):
