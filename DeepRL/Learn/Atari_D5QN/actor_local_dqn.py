@@ -127,7 +127,7 @@ class Actor:
         # - receive initial model parameters 
 
         self.model = model.DQN(self.env, self.device)
-        #self.model.load_state_dict(torch.load("model_local.pth"))
+        self.model.load_state_dict(torch.load("model_local.pth"))
         self.target_model = model.DQN(self.env, self.device)
         self.model.to(self.device)
         self.target_model.to(self.device)

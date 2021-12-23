@@ -20,13 +20,10 @@ class DQN(nn.Module):
 
         self.conv = nn.Sequential(
             nn.Conv2d(self.input_shape[0], 32, kernel_size=8, stride=4),
-            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.BatchNorm2d(64),
             nn.ReLU()
         )
 
@@ -40,7 +37,7 @@ class DQN(nn.Module):
         self.fc.apply(self.init_weights)
 
     def init_weights(self, m):
-        if isinstance(m, nn.Conv2d) or isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.Linear):
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
             m.weight.data.fill_(0.0)
             m.bias.data.fill_(0.01)
 
@@ -58,7 +55,7 @@ class DQN(nn.Module):
         Return action, max_q_value for given state
         """
         with torch.no_grad():
-            state = state.unsqueeze(0) # make it in a batch format [1, 1, 84, 84]
+            state = state.unsqueeze(0)          # make it in a batch format [1, 1, 84, 84]
             state = state.to(self.device)
             q_values = self.forward(state)
 

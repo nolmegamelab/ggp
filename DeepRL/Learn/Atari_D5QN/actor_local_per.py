@@ -34,8 +34,9 @@ class ExploreStepStorage:
         self.step_deque = collections.deque(maxlen=self.capacity)
         self.send_deque = collections.deque(maxlen=self.capacity)
         self.gamma = self.opts.gamma
-        self.memory = buffer.ReplayBuffer(self.opts.learner_storage_capacity) 
-                            #self.opts.alpha)
+        self.memory = buffer.PrioritizedReplayBuffer(
+                            self.opts.learner_storage_capacity, 
+                            self.opts.alpha)
 
     def add(self, state, reward, action, done, q_values):
         '''
@@ -55,7 +56,8 @@ class ExploreStepStorage:
                 target_step['action'], 
                 target_step['reward'],
                 next_state, 
-                target_step['done'] 
+                target_step['done'], 
+                td_error 
             )
 
             self.step_deque.popleft()
@@ -127,7 +129,7 @@ class Actor:
         # - receive initial model parameters 
 
         self.model = model.DQN(self.env, self.device)
-        #self.model.load_state_dict(torch.load("model_local.pth"))
+        self.model.load_state_dict(torch.load("model_local_per.pth"))
         self.target_model = model.DQN(self.env, self.device)
         self.model.to(self.device)
         self.target_model.to(self.device)
@@ -193,7 +195,7 @@ class Actor:
 
             if learning_loop_count % self.opts.save_interval == 0:
                 print("Saving Model..")
-                torch.save(self.model.state_dict(), "model_local.pth")
+                torch.save(self.model.state_dict(), "model_local_per.pth")
 
             time.sleep(0.001)
 
