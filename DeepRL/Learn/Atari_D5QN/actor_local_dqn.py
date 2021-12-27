@@ -127,7 +127,7 @@ class Actor:
         # - receive initial model parameters 
 
         self.model = model.DQN(self.env, self.device)
-        self.model.load_state_dict(torch.load("model_local_dqn.pth"))
+        #self.model.load_state_dict(torch.load("model_local_dqn.pth"))
         self.target_model = model.DQN(self.env, self.device)
         self.model.to(self.device)
         self.target_model.to(self.device)
@@ -210,8 +210,8 @@ class Actor:
 
         states_float = np.array(states).astype(np.float32) / 255.0
         next_states_float = np.array(next_states).astype(np.float32) / 255.0
-        rewards_tensor = torch.FloatTensor(rewards).to(self.device)
-        dones_tensor = torch.FloatTensor(dones).to(self.device)
+        rewards_tensor = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)
+        dones_tensor = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
 
         # convert back to float from uint8 
         states_tensor = torch.FloatTensor(states_float).to(self.device)

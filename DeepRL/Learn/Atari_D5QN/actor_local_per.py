@@ -128,7 +128,7 @@ class Actor:
         # - receive initial model parameters 
 
         self.model = model.DQN(self.env, self.device)
-        #self.model.load_state_dict(torch.load("model_local_per.pth"))
+        self.model.load_state_dict(torch.load("model_local_per.pth"))
         self.target_model = model.DQN(self.env, self.device)
         self.model.to(self.device)
         self.target_model.to(self.device)
@@ -157,6 +157,7 @@ class Actor:
             state = np.array(state)
             action, q_values = self.model.act(torch.FloatTensor(state), self.epsilon)
             next_state, reward, done, _ = self.env.step(action)
+            print(f'action: {action}, reward: {reward}')
             self.storage.add(state, reward, action, done, q_values)
 
             if self.opts.env_render: 

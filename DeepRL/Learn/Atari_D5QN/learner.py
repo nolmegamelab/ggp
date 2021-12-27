@@ -171,9 +171,6 @@ class Learner:
         states_tensor = torch.FloatTensor(states_float).to(self.device)
         next_states_tensor = torch.FloatTensor(next_states_float).to(self.device)
 
-        with torch.no_grad():
-            next_q_values = self.model(next_states_tensor)
-
         q_values = self.model(states_tensor)
         target_next_q_values = self.target_model(next_states_tensor)
 
@@ -182,8 +179,7 @@ class Learner:
 
         # decrypt following 
         q_a_values = q_values.gather(-1, actions_tensor).squeeze(1)
-        next_actions = next_q_values.max(-1)[1].unsqueeze(1)
-        next_q_a_values = target_next_q_values.gather(-1, next_actions).squeeze(1)
+        next_q_a_values = target_next_q_values.max(-1)[0].unsqueeze(1)
 
         # rewards가 이전 step의 보상을 포함하고 있어 최종 보상만 감쇄 반영한다. 
         expected_q_a_values = rewards_tensor + self.opts.gamma * next_q_a_values * (1 - dones_tensor)

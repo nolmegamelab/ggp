@@ -11,7 +11,7 @@ class Options:
         self.env_clip_rewards = 0
         self.env_frame_stack = 1
         self.env_episode_life = 1 
-        self.env_render = False
+        self.env_render = True
         self.max_episode_length = 50000
         self.epsilon_base = 0.99 
         self.epsilon_alpha = 1.0

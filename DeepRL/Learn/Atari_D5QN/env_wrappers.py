@@ -78,6 +78,7 @@ class EpisodicLifeEnv(gym.Wrapper):
             # for Qbert sometimes we stay in lives == 0 condition for a few frames
             # so it's important to keep lives > 0, so that we only reset once
             # the environment advertises done.
+            reward = -1 # add death penality
             done = True
         self.lives = lives
         return obs, reward, done, info
@@ -252,32 +253,6 @@ class TorchLazyFrames(LazyFrames):
         return self._out
 
 
-def make_atari(env_id, max_episode_steps=None):
-    env = gym.make(env_id)
-    assert 'NoFrameskip' in env.spec.id
-    env = NoopResetEnv(env, noop_max=30)
-    env = MaxAndSkipEnv(env, skip=4)
-    if max_episode_steps is not None:
-        env = TimeLimit(env, max_episode_steps=max_episode_steps)
-    return env
-
-
-def wrap_deepmind(env, episode_life=True, clip_rewards=True, frame_stack=False, scale=False):
-    """Configure environment for DeepMind-style Atari.
-    """
-    if episode_life:
-        env = EpisodicLifeEnv(env)
-    if 'FIRE' in env.unwrapped.get_action_meanings():
-        env = FireResetEnv(env)
-    env = WarpFrame(env)
-    if scale:
-        env = ScaledFloatFrame(env)
-    if clip_rewards:
-        env = ClipRewardEnv(env)
-    if frame_stack:
-        env = FrameStack(env, 4)
-    return env
-
 
 class TimeLimit(gym.Wrapper):
     def __init__(self, env, max_episode_steps=None):
@@ -313,11 +288,37 @@ class ImageToPyTorch(gym.ObservationWrapper):
         return np.swapaxes(observation, 2, 0)
 
 
-def wrap_atari_dqn(env, args):
-    if args.env_episode_life:
+def make_atari(env_id, max_episode_steps=None):
+    env = gym.make(env_id)
+    assert 'NoFrameskip' in env.spec.id
+    env = NoopResetEnv(env, noop_max=3)
+    #env = MaxAndSkipEnv(env, skip=4)
+    if max_episode_steps is not None:
+        env = TimeLimit(env, max_episode_steps=max_episode_steps)
+    return env
+
+
+def wrap_deepmind(env, episode_life=True, clip_rewards=True, frame_stack=False, scale=False):
+    """Configure environment for DeepMind-style Atari.
+    """
+    if episode_life:
         env = EpisodicLifeEnv(env)
     if 'FIRE' in env.unwrapped.get_action_meanings():
         env = FireResetEnv(env)
+    env = WarpFrame(env)
+    if scale:
+        env = ScaledFloatFrame(env)
+    if clip_rewards:
+        env = ClipRewardEnv(env)
+    if frame_stack:
+        env = FrameStack(env, 4)
+    return env
+
+def wrap_atari_dqn(env, args):
+    if args.env_episode_life:
+        env = EpisodicLifeEnv(env)
+    #if 'FIRE' in env.unwrapped.get_action_meanings():
+    #    env = FireResetEnv(env)
     env = WarpFrame(env)
     # removed scaled float frame. uint8 is 4 times memory efficient.
     if args.env_clip_rewards:
