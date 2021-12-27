@@ -9,7 +9,7 @@ import torch
 import traceback
 
 import buffer
-import env_wrappers
+import atari
 import model
 import mq
 import msgpack
@@ -114,8 +114,7 @@ class Actor:
 
         self.writer = tensorboardX.SummaryWriter(comment="-{}-actor{}".format(self.opts.env, self.actor_index))
 
-        self.env = env_wrappers.make_atari(self.opts.env)
-        self.env = env_wrappers.wrap_atari_dqn(self.env, self.opts)
+        self.env = atari.Env(self.opts.env)
 
         seed = self.opts.seed + self.actor_index
         utils.set_global_seeds(seed, use_torch=True)
@@ -127,9 +126,12 @@ class Actor:
         # - check learner 
         # - receive initial model parameters 
 
-        self.model = model.DQN(self.env, self.device)
-        self.model.load_state_dict(torch.load("model_local_per.pth"))
-        self.target_model = model.DQN(self.env, self.device)
+        # NOOP, FIRE 행동 제외. Q 행동에는 유지.
+        action_map = {0:2, 1:3, 2:2, 3:3}
+
+        self.model = model.DQN(self.env, action_map, self.device)
+        #self.model.load_state_dict(torch.load("model_local_per.pth"))
+        self.target_model = model.DQN(self.env, action_map, self.device)
         self.model.to(self.device)
         self.target_model.to(self.device)
         self.target_model.load_state_dict(self.model.state_dict())
@@ -148,6 +150,7 @@ class Actor:
         self.epsilon_decay = self.opts.epsilon_decay
         episode_reward, episode_length, episode_idx, param_age = 0, 0, 0, 0
         state = self.env.reset()
+        state = self.env.noop(4) # Fire for random time
         sum_q_value = 0
         max_q_value = 0
         sum_loss = 0
@@ -157,7 +160,7 @@ class Actor:
             state = np.array(state)
             action, q_values = self.model.act(torch.FloatTensor(state), self.epsilon)
             next_state, reward, done, _ = self.env.step(action)
-            print(f'action: {action}, reward: {reward}')
+            #print(f'action: {action}, reward: {reward}')
             self.storage.add(state, reward, action, done, q_values)
 
             if self.opts.env_render: 
@@ -181,6 +184,7 @@ class Actor:
                 sum_q_value = 0
                 sum_loss = 0
                 state = self.env.reset()
+                state = self.env.noop(30) # Fire for random time
 
             batch = self.storage.sample()
             if batch is not None:
@@ -210,8 +214,8 @@ class Actor:
     def _forward(self, batch):
         states, actions, rewards, next_states, dones, priors, weights, indices = batch
 
-        states_float = np.array(states).astype(np.float32) / 255.0
-        next_states_float = np.array(next_states).astype(np.float32) / 255.0
+        states_float = np.array(states).astype(np.float32) 
+        next_states_float = np.array(next_states).astype(np.float32) 
         rewards_tensor = torch.FloatTensor(rewards).to(self.device)
         dones_tensor = torch.FloatTensor(dones).to(self.device)
 

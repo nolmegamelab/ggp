@@ -184,8 +184,8 @@ if __name__ == "__main__":
 
             # 프레임을 전처리 한 후 4개의 상태를 쌓아서 입력값으로 사용.
             state = pre_processing(observe)
-            history = np.stack((state, state, state, state), axis=2)
-            history = np.reshape([history], (1, 84, 84, 4))
+            history = np.stack((state, state, state, state), axis=0)
+            history = np.reshape([history], (1, 4, 84, 84))
 
             while not done:
                 if render:
@@ -206,8 +206,8 @@ if __name__ == "__main__":
                 observe, reward, done, info = env.step(real_action)
                 # 각 타임스텝마다 상태 전처리
                 next_state = pre_processing(observe)
-                next_state = np.reshape([next_state], (1, 84, 84, 1))
-                next_history = np.append(next_state, history[:, :, :, :3], axis=3)
+                next_state = np.reshape([next_state], (1, 1, 84, 84))
+                next_history = np.append(next_state, history[:3, :, :, :], axis=0)
 
                 agent.avg_q_max += np.amax(agent.model(np.float32(history / 255.))[0])
 
@@ -221,8 +221,8 @@ if __name__ == "__main__":
 
                 if dead:
                     history = np.stack((next_state, next_state,
-                                        next_state, next_state), axis=2)
-                    history = np.reshape([history], (1, 84, 84, 4))
+                                        next_state, next_state), axis=0)
+                    history = np.reshape([history], (1, 4, 84, 84))
                 else:
                     history = next_history
 

@@ -10,7 +10,7 @@ class Options:
         self.env_scale = 1
         self.env_clip_rewards = 0
         self.env_frame_stack = 1
-        self.env_episode_life = 1 
+        self.env_episode_life = 0 
         self.env_render = True
         self.max_episode_length = 50000
         self.epsilon_base = 0.99 

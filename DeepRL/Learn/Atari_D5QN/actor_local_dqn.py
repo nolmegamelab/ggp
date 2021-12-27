@@ -126,9 +126,12 @@ class Actor:
         # - check learner 
         # - receive initial model parameters 
 
-        self.model = model.DQN(self.env, self.device)
+        # NOOP, FIRE 행동 제외. Q 행동에는 유지.
+        action_map = {0:2, 1:3, 2:2, 3:3}
+
+        self.model = model.DQN(self.env, action_map, self.device)
         #self.model.load_state_dict(torch.load("model_local_dqn.pth"))
-        self.target_model = model.DQN(self.env, self.device)
+        self.target_model = model.DQN(self.env, action_map, self.device)
         self.model.to(self.device)
         self.target_model.to(self.device)
         self.target_model.load_state_dict(self.model.state_dict())
