@@ -68,7 +68,7 @@ class DQNAgent:
         load_model = True
 
         if load_model:
-            self.model.load_weights("./save_model/model")
+            self.model.load_weights("./model_170/model")
 
         # 타깃 모델 초기화
         self.update_target_model()

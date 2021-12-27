@@ -65,7 +65,7 @@ class DQNAgent:
         self.target_model = DQN(action_size, state_size)
         self.optimizer = Adam(self.learning_rate, clipnorm=10.)
 
-        load_model = True
+        load_model = False
 
         if load_model:
             self.model.load_weights("./save_model/model")
