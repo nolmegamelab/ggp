@@ -26,22 +26,19 @@ class DQN(nn.Module):
         self.num_actions = action_size
 
         self.conv = nn.Sequential(
-            nn.Conv2d(self.input_shape[0], 32, kernel_size=8, stride=4),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(self.input_shape[0], 16, kernel_size=8, stride=4),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1),
             nn.ReLU()
         )
 
         conv_out_size = self._get_conv_out(self.input_shape)
         self.fc = nn.Sequential(
-            nn.Linear(conv_out_size, 512),
+            nn.Linear(conv_out_size, 256),
             nn.ReLU(),
-            nn.Linear(512, self.num_actions)
+            nn.Linear(256, self.num_actions)
         )
         #self.conv.apply(self.init_weights)
         #self.fc.apply(self.init_weights)
@@ -57,7 +54,8 @@ class DQN(nn.Module):
 
     def forward(self, x):
         """전방 연쇄."""
-        conv_out = self.conv(x).view(x.size()[0], -1)
+        conv = self.conv(x)
+        conv_out = conv.view(x.size()[0], -1)
         return self.fc(conv_out)
 
     def act(self, state, epsilon):
@@ -66,7 +64,7 @@ class DQN(nn.Module):
         """
         with torch.no_grad():
             state = torch.FloatTensor(state)
-            state = state.unsqueeze(0)          # make it in a batch format [1, 1, 84, 84]
+            state = state.unsqueeze(0)          # make it in a batch format [1, 4, 84, 84]
             state = state.to(self.device)
             q_values = self.forward(state)
 
@@ -90,27 +88,29 @@ class DQNAgent:
         # 0.6 : 한번 훈련 후 지정 
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-4
+        self.learning_rate = 1e-3
         self.epsilon_start, self.epsilon_end = 1.0, 0.00001
         self.epsilon = self.epsilon_start
         self.exploration_steps = 50000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
-        self.batch_size = 32 
+        self.batch_size = 64
         self.train_start = 10000
         self.update_target_rate = 10000
 
         # 리플레이 메모리
-        self.memory = deque(maxlen=20000)
+        self.memory = deque(maxlen=30000)
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
-        self.no_op_steps = 30
-        self.device = 'cpu'
+        self.no_op_steps = 10
+        self.device = 'cuda'
         # 모델과 타깃 모델 생성
         self.model = DQN(action_size, state_size, self.device)
+        self.model.to(self.device)
         self.target_model = DQN(action_size, state_size, self.device)
+        self.target_model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
-        load_model = False
+        load_model = True
 
         if load_model:
             self.model.load_state_dict(torch.load("./save_model/model.pth"))
@@ -190,10 +190,10 @@ class DQNAgent:
 
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), 10.0)
+        #torch.nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), 10.0)
         self.optimizer.step()
 
-        self.avg_loss += loss.detach().numpy()
+        self.avg_loss += loss.detach().cpu().numpy()
 
 
 # 학습속도를 높이기 위해 흑백화면으로 전처리
@@ -219,7 +219,7 @@ if __name__ == "__main__":
         # 불필요한 행동을 없애주기 위한 딕셔너리 선언
         action_dict = {0:1, 1:2, 2:3, 3:3}
 
-        num_episode = 200 
+        num_episode = 351
         for e in range(num_episode):
             done = False
             dead = False
