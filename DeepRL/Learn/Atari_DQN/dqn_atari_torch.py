@@ -79,7 +79,7 @@ class DQN(nn.Module):
 
 # 브레이크아웃 예제에서의 DQN 에이전트
 class DQNAgent:
-    def __init__(self, action_size, state_size=(4, 84, 84)):
+    def __init__(self, action_size, memory=None, state_size=(4, 84, 84)):
         # 상태와 행동의 크기 정의
         self.state_size = state_size
         self.action_size = action_size
@@ -99,7 +99,10 @@ class DQNAgent:
         self.update_target_rate = 10000
 
         # 리플레이 메모리
-        self.memory = deque(maxlen=30000)
+        if memory is None:
+            self.memory = deque(maxlen=30000)
+        else: 
+            self.memory = memory
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
         self.no_op_steps = 10
         self.device = 'cuda'
@@ -204,13 +207,15 @@ def pre_processing(observe):
 
 
 if __name__ == "__main__":
+    memory = deque(maxlen=50000)
+
     for loop in range(0, 1000):
         # 환경과 DQN 에이전트 생성
         #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
         env = gym.make('BreakoutDeterministic-v4')
         render = False
 
-        agent = DQNAgent(action_size=3)
+        agent = DQNAgent(action_size=3, memory=memory)
 
         global_step = 0
         score_avg = 0
