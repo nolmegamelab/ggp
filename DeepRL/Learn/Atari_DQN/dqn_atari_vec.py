@@ -1,3 +1,8 @@
+import torch 
+import torch.nn as nn 
+import torch.nn.functional as F 
+import torch.optim as optim 
+
 import os
 import gym
 import random
@@ -8,35 +13,55 @@ from collections import deque
 from skimage.color import rgb2gray
 from skimage.transform import resize
 
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Conv2D, Dense, Flatten
+# from distper 
+class DQN(nn.Module):
+    """Deep Q-Network."""
 
-
-# 상태가 입력, 큐함수가 출력인 인공신경망 생성
-class DQN(tf.keras.Model):
-    def __init__(self, action_size, state_size):
+    def __init__(self, action_size, state_size, device):
+        """초기화."""
         super(DQN, self).__init__()
-        self.conv1 = Conv2D(16, (8, 8), strides=(4, 4), activation='relu',
-                            input_shape=state_size)
-        self.conv2 = Conv2D(32, (4, 4), strides=(2, 2), activation='relu')
-        self.conv3 = Conv2D(32, (3, 3), strides=(1, 1), activation='relu')
-        self.flatten = Flatten()
-        self.fc = Dense(256, activation='relu')
-        self.fc_out = Dense(action_size)
 
-    def call(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.flatten(x)
-        x = self.fc(x)
-        q = self.fc_out(x)
-        return q
+        self.device = device
+        self.input_shape = state_size
+        self.num_actions = action_size
+
+        self.fc = nn.Sequential(
+            nn.BatchNorm1d(4),
+            nn.Flatten(),
+            nn.Linear(84*3*4, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, self.num_actions)
+        )
+
+    def forward(self, x):
+        """전방 연쇄."""
+        #conv_out = conv.view(x.size()[0], -1)
+        return self.fc(x)
+
+    def act(self, state, epsilon):
+        """
+        Return action, max_q_value for given state
+        """
+        with torch.no_grad():
+            state = torch.FloatTensor(state)
+            state = state.unsqueeze(0)          # make it in a batch format [1, 4, 84, 84]
+            state = state.to(self.device)
+            q_values = self.forward(state)
+
+            if random.random() > epsilon:
+                action = q_values.max(1)[1].item()
+            else:
+                action = random.randrange(self.num_actions)
+        return action, q_values.cpu().numpy()[0]
+
+
 
 
 # 브레이크아웃 예제에서의 DQN 에이전트
 class DQNAgent:
-    def __init__(self, action_size, state_size=(84, 84, 4)):
+    def __init__(self, action_size, memory=None, state_size=(4, 84, 84)):
         # 상태와 행동의 크기 정의
         self.state_size = state_size
         self.action_size = action_size
@@ -46,9 +71,9 @@ class DQNAgent:
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon_start, self.epsilon_end = 0.01, 0.00001
+        self.epsilon_start, self.epsilon_end = 0.8, 0.00001
         self.epsilon = self.epsilon_start
-        self.exploration_steps = 50000.
+        self.exploration_steps = 100000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
         self.batch_size = 32 
@@ -56,19 +81,24 @@ class DQNAgent:
         self.update_target_rate = 10000
 
         # 리플레이 메모리
-        self.memory = deque(maxlen=20000)
+        if memory is None:
+            self.memory = deque(maxlen=200000)
+        else: 
+            self.memory = memory
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
-        self.no_op_steps = 30
-
+        self.no_op_steps = 10
+        self.device = 'cuda'
         # 모델과 타깃 모델 생성
-        self.model = DQN(action_size, state_size)
-        self.target_model = DQN(action_size, state_size)
-        self.optimizer = Adam(self.learning_rate, clipnorm=10.)
+        self.model = DQN(action_size, state_size, self.device)
+        self.model.to(self.device)
+        self.target_model = DQN(action_size, state_size, self.device)
+        self.target_model.to(self.device)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
-        load_model = False
+        load_model = True 
 
         if load_model:
-            self.model.load_weights("./save_model/model")
+            self.model.load_state_dict(torch.load("./save_model/model_torch.pth"))
 
         # 타깃 모델 초기화
         self.update_target_model()
@@ -80,15 +110,11 @@ class DQNAgent:
 
     # 타깃 모델을 모델의 가중치로 업데이트
     def update_target_model(self):
-        self.target_model.set_weights(self.model.get_weights())
+        self.target_model.load_state_dict(self.model.state_dict())
 
     # 입실론 탐욕 정책으로 행동 선택
-    def get_action(self, history):
-        if np.random.rand() <= self.epsilon:
-            return random.randrange(self.action_size)
-        else:
-            q_value = self.model(history)
-            return np.argmax(q_value[0])
+    def get_action(self, state):
+        return self.model.act(state, self.epsilon)
 
     # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장
     def append_sample(self, history, action, reward, next_history, dead):
@@ -113,57 +139,80 @@ class DQNAgent:
         # 이 부분은 논문과 다르다 - 최신에서 샘플링. 
         batch = random.sample(self.memory, self.batch_size)
 
-        history = np.array([sample[0][0] for sample in batch],
+        states = np.array([sample[0] for sample in batch],
                            dtype=np.float32)
         actions = np.array([sample[1] for sample in batch])
         rewards = np.array([sample[2] for sample in batch])
-        next_history = np.array([sample[3][0] for sample in batch],
+        next_states = np.array([sample[3] for sample in batch],
                                 dtype=np.float32)
         dones = np.array([sample[4] for sample in batch])
 
-        # 학습 파라메터
-        model_params = self.model.trainable_variables
-        with tf.GradientTape() as tape:
-            # 현재 상태에 대한 모델의 큐함수
-            predicts = self.model(history)
-            one_hot_action = tf.one_hot(actions, self.action_size)
-            predicts = tf.reduce_sum(one_hot_action * predicts, axis=1)
+        states_float = np.array(states).astype(np.float32) 
+        next_states_float = np.array(next_states).astype(np.float32) 
+        rewards_tensor = torch.FloatTensor(rewards).to(self.device)
+        dones_tensor = torch.FloatTensor(dones).to(self.device)
 
-            # 다음 상태에 대한 타깃 모델의 큐함수
-            target_predicts = self.target_model(next_history)
+        # convert back to float from uint8 
+        states_tensor = torch.FloatTensor(states_float).to(self.device)
+        next_states_tensor = torch.FloatTensor(next_states_float).to(self.device)
+        actions_tensor = torch.from_numpy(actions)
+        actions_tensor = actions_tensor.type(torch.int64).unsqueeze(1).to(self.device)
 
-            # 벨만 최적 방정식을 구성하기 위한 타깃과 큐함수의 최대 값 계산
-            max_q = np.amax(target_predicts, axis=1)
-            targets = rewards + (1 - dones) * self.discount_factor * max_q
+        with torch.no_grad():
+            next_q_values = self.target_model(next_states_tensor)
+            next_q_a_values = next_q_values.max(1)[0]
+            # rewards가 이전 step의 보상을 포함하고 있어 최종 보상만 감쇄 반영한다. 
+            expected_q_a_values = rewards_tensor + self.discount_factor * next_q_a_values * (1 - dones_tensor)
+            expected_q_a_values = expected_q_a_values.to(self.device).unsqueeze(1)
 
-            # 후버로스 계산
-            error = tf.abs(targets - predicts)
-            quadratic_part = tf.clip_by_value(error, 0.0, 1.0)
-            linear_part = error - quadratic_part
-            loss = tf.reduce_mean(0.5 * tf.square(quadratic_part) + linear_part)
+        q_values = self.model(states_tensor)
+        q_a_values = q_values.gather(-1, actions_tensor)
 
-            self.avg_loss += loss.numpy()
+        td_error = torch.abs(expected_q_a_values - q_a_values)
+        # Huber loss is very important for the convergence of breakout play
+        loss = torch.nn.SmoothL1Loss()(expected_q_a_values, q_a_values)
 
-        # 오류함수를 줄이는 방향으로 모델 업데이트
-        grads = tape.gradient(loss, model_params)
-        self.optimizer.apply_gradients(zip(grads, model_params))
+        priorities = (td_error + -1e-6).clone().detach().cpu().numpy()
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        #torch.nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), 10.0)
+        self.optimizer.step()
+
+        self.avg_loss += loss.detach().cpu().numpy()
 
 
 # 학습속도를 높이기 위해 흑백화면으로 전처리
 def pre_processing(observe):
     # rgb2gray에서 float 형으로 변경
-    processed_observe = resize(rgb2gray(observe), (84, 84), mode='constant') 
-    return processed_observe
+    pobs = resize(rgb2gray(observe), (84, 84), mode='constant') 
+    conv = np.array([1 << i for i in range(0, 32)])
+    conv2 = np.array([1 << i for i in range(0, 20)])
+    conv = conv.T
+    conv2 = conv2.T
+    obsb = np.where(pobs > 0, 1, 0)
+    obsb_1 = obsb[:, 0:32] 
+    obsb_2 = obsb[:, 32:64] 
+    obsb_3 = obsb[:, 64:] 
+    cobsb_1 = np.matmul(obsb_1, conv)
+    cobsb_2 = np.matmul(obsb_2, conv)
+    cobsb_3 = np.matmul(obsb_3, conv2)
+    obs = np.stack((cobsb_1, cobsb_2, cobsb_3), axis=1)
+    obs = obs.ravel()
+
+    return obs
 
 
 if __name__ == "__main__":
-    for loop in range(0, 1000):
+    memory = deque(maxlen=500000)
+
+    for loop in range(0, 100000):
         # 환경과 DQN 에이전트 생성
         #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
         env = gym.make('BreakoutDeterministic-v4')
-        render = True
+        render = False
 
-        agent = DQNAgent(action_size=3)
+        agent = DQNAgent(action_size=3, memory=memory)
 
         global_step = 0
         score_avg = 0
@@ -172,7 +221,7 @@ if __name__ == "__main__":
         # 불필요한 행동을 없애주기 위한 딕셔너리 선언
         action_dict = {0:1, 1:2, 2:3, 3:3}
 
-        num_episode = 200 
+        num_episode = 100000
         for e in range(num_episode):
             done = False
             dead = False
@@ -187,8 +236,7 @@ if __name__ == "__main__":
 
             # 프레임을 전처리 한 후 4개의 상태를 쌓아서 입력값으로 사용.
             state = pre_processing(observe)
-            history = np.stack((state, state, state, state), axis=2)
-            history = np.reshape([history], (1, 84, 84, 4))
+            history = np.stack((state, state, state, state), axis=0) # (4, 84*3)
 
             while not done:
                 if render:
@@ -197,7 +245,7 @@ if __name__ == "__main__":
                 step += 1
 
                 # 바로 전 history를 입력으로 받아 행동을 선택
-                action = agent.get_action(history)
+                action, q_values = agent.get_action(history)
                 # 1: 정지, 2: 왼쪽, 3: 오른쪽
                 real_action = action_dict[action]
 
@@ -209,10 +257,10 @@ if __name__ == "__main__":
                 observe, reward, done, info = env.step(real_action)
                 # 각 타임스텝마다 상태 전처리
                 next_state = pre_processing(observe)
-                next_state = np.reshape([next_state], (1, 84, 84, 1))
-                next_history = np.append(next_state, history[:, :, :, :3], axis=3)
+                next_state_a = np.reshape([next_state], (1, -1))
+                next_history = np.append(history[:3, :], next_state_a, axis=0)
 
-                agent.avg_q_max += np.amax(agent.model(np.float32(history / 255.))[0])
+                agent.avg_q_max += np.max(q_values)
 
                 if start_life > info['lives']:
                     dead = True
@@ -234,8 +282,7 @@ if __name__ == "__main__":
 
                 if dead:
                     history = np.stack((next_state, next_state,
-                                        next_state, next_state), axis=2)
-                    history = np.reshape([history], (1, 84, 84, 4))
+                                        next_state, next_state), axis=0)
                 else:
                     history = next_history
 
@@ -260,7 +307,11 @@ if __name__ == "__main__":
 
                     agent.avg_q_max, agent.avg_loss = 0, 0
 
+                # start from beginning
+            if agent.epsilon < 0.001:
+                break
+
             # 모델 저장
             if (e+1) % 50 == 0:
-                agent.model.save_weights("./save_model/model", save_format="tf")
-                print('model saved\n')
+                torch.save(agent.model.state_dict(), "./save_model/model_torch.pth")
+                print(f'episode: {e}. model saved\n')

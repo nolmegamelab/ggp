@@ -9,7 +9,7 @@ import torch
 import traceback
 
 import buffer
-import atari
+import env_wrappers
 import model
 import mq
 import msgpack
@@ -57,7 +57,7 @@ class ExploreStepStorage:
                 target_step['reward'],
                 next_state, 
                 target_step['done'], 
-                td_error 
+                reward_q_a_value
             )
 
             self.step_deque.popleft()
@@ -114,7 +114,8 @@ class Actor:
 
         self.writer = tensorboardX.SummaryWriter(comment="-{}-actor{}".format(self.opts.env, self.actor_index))
 
-        self.env = atari.Env(self.opts.env)
+        self.env = env_wrappers.make_atari(self.opts.env)
+        self.env = env_wrappers.wrap_atari_dqn(self.env, self.opts)
 
         seed = self.opts.seed + self.actor_index
         utils.set_global_seeds(seed, use_torch=True)
@@ -127,7 +128,7 @@ class Actor:
         # - receive initial model parameters 
 
         # NOOP, FIRE 행동 제외. Q 행동에는 유지.
-        action_map = {0:2, 1:3, 2:2, 3:3}
+        action_map = {0:0, 1:1, 2:2, 3:3}
 
         self.model = model.DQN(self.env, action_map, self.device)
         #self.model.load_state_dict(torch.load("model_local_per.pth"))
@@ -150,7 +151,6 @@ class Actor:
         self.epsilon_decay = self.opts.epsilon_decay
         episode_reward, episode_length, episode_idx, param_age = 0, 0, 0, 0
         state = self.env.reset()
-        state = self.env.noop(4) # Fire for random time
         sum_q_value = 0
         max_q_value = 0
         sum_loss = 0
@@ -161,6 +161,7 @@ class Actor:
             action, q_values = self.model.act(torch.FloatTensor(state), self.epsilon)
             next_state, reward, done, _ = self.env.step(action)
             #print(f'action: {action}, reward: {reward}')
+            # make the reward positive since PriorityReplayBuffer assumes it
             self.storage.add(state, reward, action, done, q_values)
 
             if self.opts.env_render: 
@@ -184,7 +185,6 @@ class Actor:
                 sum_q_value = 0
                 sum_loss = 0
                 state = self.env.reset()
-                state = self.env.noop(30) # Fire for random time
 
             batch = self.storage.sample()
             if batch is not None:
@@ -230,13 +230,14 @@ class Actor:
             next_q_a_values = next_q_values.max(1)[0]
             # rewards가 이전 step의 보상을 포함하고 있어 최종 보상만 감쇄 반영한다. 
             expected_q_a_values = rewards_tensor + self.opts.gamma * next_q_a_values * (1 - dones_tensor)
-            expected_q_a_values = expected_q_a_values.to(self.device)
+            expected_q_a_values = expected_q_a_values.to(self.device).unsqueeze(1)
 
         q_values = self.model(states_tensor)
-        q_a_values = q_values.gather(-1, actions_tensor).squeeze(1)
+        q_a_values = q_values.gather(-1, actions_tensor)
 
         td_error = torch.abs(expected_q_a_values - q_a_values)
-        loss = torch.nn.MSELoss()(expected_q_a_values, q_a_values)
+        loss = torch.nn.SmoothL1Loss()(expected_q_a_values, q_a_values)
+        #loss = torch.nn.MSELoss()(expected_q_a_values, q_a_values)
 
         priorities = (td_error + -1e-6).clone().detach().cpu().numpy()
         return loss, priorities

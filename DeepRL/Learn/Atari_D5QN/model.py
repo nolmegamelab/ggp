@@ -15,19 +15,16 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
 
         self.device = device
-        self.input_shape = env.shape
+        self.input_shape = env.observation_space.shape
         self.num_actions = env.action_space.n
         self.action_map = action_map
 
         self.conv = nn.Sequential(
             nn.Conv2d(self.input_shape[0], 32, kernel_size=8, stride=4),
-            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            nn.BatchNorm2d(64),
             nn.ReLU()
         )
 
