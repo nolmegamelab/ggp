@@ -12,6 +12,7 @@ from collections import deque
 
 from skimage.color import rgb2gray
 from skimage.transform import resize
+import logger
 
 # from distper 
 class DQN(nn.Module):
@@ -88,10 +89,10 @@ class DQNAgent:
         # 0.6 : 한번 훈련 후 지정 
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-4
+        self.learning_rate = 1e-3
         self.epsilon_start, self.epsilon_end = 0.8, 0.00001
         self.epsilon = self.epsilon_start
-        self.exploration_steps = 10000.
+        self.exploration_steps = 90000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
         self.batch_size = 32 
@@ -100,7 +101,7 @@ class DQNAgent:
 
         # 리플레이 메모리
         if memory is None:
-            self.memory = deque(maxlen=30000)
+            self.memory = deque(maxlen=500000)
         else: 
             self.memory = memory
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
@@ -113,7 +114,7 @@ class DQNAgent:
         self.target_model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
-        load_model = False
+        load_model = True
 
         if load_model:
             self.model.load_state_dict(torch.load("./save_model/model_torch.pth"))
@@ -208,7 +209,9 @@ def pre_processing(observe):
 
 
 if __name__ == "__main__":
-    memory = deque(maxlen=50000)
+    memory = deque(maxlen=120000)
+
+    logger = logger.Logger('atari_torch.log')
 
     for loop in range(0, 1000):
         # 환경과 DQN 에이전트 생성
@@ -225,7 +228,7 @@ if __name__ == "__main__":
         # 불필요한 행동을 없애주기 위한 딕셔너리 선언
         action_dict = {0:1, 1:2, 2:3, 3:3}
 
-        num_episode = 351
+        num_episode = 100000
         for e in range(num_episode):
             done = False
             dead = False
@@ -261,8 +264,11 @@ if __name__ == "__main__":
                 observe, reward, done, info = env.step(real_action)
                 # 각 타임스텝마다 상태 전처리
                 next_state = pre_processing(observe)
-                next_state_a = np.reshape([next_state], (1, 84, 84))
-                next_history = np.append(history[:3, :, :], next_state_a, axis=0)
+                next_history = np.zeros((4, 84, 84)) 
+                next_history[0, :, :] = history[1, :, :]
+                next_history[1, :, :] = history[2, :, :]
+                next_history[2, :, :] = history[3, :, :]
+                next_history[3, :, :] = next_state
 
                 agent.avg_q_max += np.max(q_values)
 
@@ -307,13 +313,13 @@ if __name__ == "__main__":
                     log += "epsilon: {:.3f} | ".format(agent.epsilon)
                     log += "q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
                     log += "avg loss : {:3.4f}".format(agent.avg_loss / float(step))
-                    print(log)
+                    logger.info(log)
 
                     agent.avg_q_max, agent.avg_loss = 0, 0
 
                 # start from beginning
-                if agent.epsilon < 0.001:
-                    break
+            if agent.epsilon < 0.001:
+                break
 
             # 모델 저장
             if (e+1) % 50 == 0:

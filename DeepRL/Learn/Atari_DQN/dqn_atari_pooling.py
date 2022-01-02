@@ -39,30 +39,19 @@ class DQN(nn.Module):
         self.input_shape = state_size
         self.num_actions = action_size
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(4, 16, kernel_size=4, stride=1),
-            nn.ReLU(),
-            nn.Conv2d(16, 16, kernel_size=3, stride=1),
-            nn.ReLU()
-        )
-
-        conv_out_size = self._get_conv_out((4, 128//8, 128//8))
         self.fc = nn.Sequential(
-            nn.Linear(conv_out_size, 256),
+            nn.Flatten(),
+            nn.Linear(4*16*16, 256),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(128, self.num_actions)
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, self.num_actions)
         )
 
     def forward(self, x):
-        cv = self.conv(x)
-        cv_out = cv.view(x.size()[0], -1)
-        return self.fc(cv_out)
-
-    def _get_conv_out(self, shape):
-        o = self.conv(torch.zeros(1, *shape))
-        return int(np.prod(o.size()))
+        return self.fc(x)
 
     def act(self, state, epsilon):
         """
@@ -94,14 +83,14 @@ class DQNAgent:
         # 0.6 : 한번 훈련 후 지정 
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-4
+        self.learning_rate = 1e-3
         self.epsilon_start, self.epsilon_end = 0.8, 0.00001
         self.epsilon = self.epsilon_start
         self.exploration_steps = 100000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
-        self.batch_size = 32 
-        self.train_start = 10000
+        self.batch_size = 32
+        self.train_start = 1000
         self.update_target_rate = 10000
 
         # 리플레이 메모리
@@ -119,7 +108,7 @@ class DQNAgent:
         self.target_model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
-        load_model = False
+        load_model = True
 
         if load_model:
             self.model.load_state_dict(torch.load("./save_model/model_pooling.pth"))
@@ -167,26 +156,21 @@ class DQNAgent:
         # 이 부분은 논문과 다르다 - 최신에서 샘플링. 
         batch = random.sample(self.memory, self.batch_size)
 
-        # 여기서 다시 시작.  
-        for sample in batch:
-            states = ;;
-
-        states = torch.tensor([sample[0] for sample in batch])
-        actions = torch.tensor([sample[1] for sample in batch])
+        states = torch.cat([sample[0] for sample in batch], dim=0)
+        actions = torch.tensor([sample[1] for sample in batch], dtype=torch.long)
         rewards = torch.tensor([sample[2] for sample in batch])
-        next_states = torch.tensor([sample[3] for sample in batch])
-        dones = torch.tensor([sample[4] for sample in batch])
+        next_states = torch.cat([sample[3] for sample in batch], dim=0)
+        dones = torch.tensor([sample[4] for sample in batch], dtype=torch.int8)
 
-        #states_float = np.array(states).astype(np.float32) 
-        #next_states_float = np.array(next_states).astype(np.float32) 
-        rewards_tensor = rewards.to(self.device)
-        dones_tensor = dones.to(self.device)
+        states = states.reshape(self.batch_size, 4, 16, 16)
+        next_states = next_states.reshape(self.batch_size, 4, 16, 16)
 
         # convert back to float from uint8 
         states_tensor = states.to(self.device)
         next_states_tensor = next_states.to(self.device)
-        actions_tensor = torch.from_numpy(actions)
-        actions_tensor = actions_tensor.type(torch.int64).unsqueeze(1).to(self.device)
+        actions_tensor = actions.unsqueeze(1).to(self.device)
+        rewards_tensor = rewards.to(self.device)
+        dones_tensor = dones.to(self.device)
 
         with torch.no_grad():
             next_q_values = self.target_model(next_states_tensor)

@@ -46,7 +46,7 @@ class DQNAgent:
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon_start, self.epsilon_end = 0.01, 0.00001
+        self.epsilon_start, self.epsilon_end = 0.8, 0.00001
         self.epsilon = self.epsilon_start
         self.exploration_steps = 50000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
@@ -56,7 +56,7 @@ class DQNAgent:
         self.update_target_rate = 10000
 
         # 리플레이 메모리
-        self.memory = deque(maxlen=20000)
+        self.memory = deque(maxlen=500000)
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
         self.no_op_steps = 30
 
@@ -161,7 +161,7 @@ if __name__ == "__main__":
         # 환경과 DQN 에이전트 생성
         #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
         env = gym.make('BreakoutDeterministic-v4')
-        render = True
+        render = False
 
         agent = DQNAgent(action_size=3)
 
