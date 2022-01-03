@@ -12,6 +12,7 @@ from collections import deque
 
 from skimage.color import rgb2gray
 from skimage.transform import resize
+import replay
 import logger
 
 # from distper 
@@ -64,7 +65,7 @@ class DQN(nn.Module):
         Return action, max_q_value for given state
         """
         with torch.no_grad():
-            state = state.to(self.device).unsqueeze(0)
+            state = torch.tensor(state, device=self.device).unsqueeze(0)
             q_values = self.forward(state)
 
             if random.random() > epsilon:
@@ -97,11 +98,11 @@ class DQNAgent:
         self.train_start = 10000
         self.update_target_rate = 50000
 
-        # 리플레이 메모리
         if memory is None:
-            self.memory = deque(maxlen=500000)
-        else: 
+            self.memory = replay.ReplayMemory(size=600000)
+        else:
             self.memory = memory
+
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
         self.no_op_steps = 10
         self.device = 'cuda'
@@ -134,8 +135,11 @@ class DQNAgent:
         return self.model.act(state, self.epsilon)
 
     # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장
-    def append_sample(self, history, action, reward, next_history, dead):
-        self.memory.append((history, action, reward, next_history, dead))
+    def add_experience(self, action, state, reward, dead):
+        return self.memory.add_experience(action, state, reward, dead)
+
+    def get_history(self, current_index):
+        return self.memory.get_history(current_index)
 
     # 텐서보드에 학습 정보를 기록
     def draw_tensorboard(self, score, step, episode):
@@ -152,18 +156,14 @@ class DQNAgent:
         if self.epsilon > self.epsilon_end:
             self.epsilon -= self.epsilon_decay_step
 
-        # 메모리에서 배치 크기만큼 무작위로 샘플 추출
-        # 이 부분은 논문과 다르다 - 최신에서 샘플링. 
-        batch = random.sample(self.memory, self.batch_size)
+        batch = self.memory.get_minibatch(self.batch_size)
+        s_states, s_actions, s_rewards, s_nexts, s_dones, s_masks = batch
 
-        states = torch.cat([sample[0] for sample in batch], dim=0).to(self.device)
-        actions = torch.tensor([sample[1] for sample in batch], dtype=torch.long, device=self.device).unsqueeze(1)
-        rewards = torch.tensor([sample[2] for sample in batch], device=self.device)
-        next_states = torch.cat([sample[3] for sample in batch], dim=0).to(self.device)
-        dones = torch.tensor([sample[4] for sample in batch], dtype=torch.int8, device=self.device)
-
-        states = states.reshape(self.batch_size, 4, 84, 84)
-        next_states = next_states.reshape(self.batch_size, 4, 84, 84)
+        states = torch.tensor(s_states, device=self.device, dtype=torch.float32)
+        actions = torch.tensor(s_actions, device=self.device, dtype=torch.long).unsqueeze(1)
+        rewards = torch.tensor(s_rewards, device=self.device, dtype=torch.float32)
+        next_states = torch.tensor(s_nexts, device=self.device, dtype=torch.float32)
+        dones = torch.tensor(s_dones, device=self.device, dtype=torch.int8)
 
         with torch.no_grad():
             next_q_values = self.target_model(next_states)
@@ -193,18 +193,21 @@ class DQNAgent:
 def pre_processing(observe):
     # rgb2gray에서 float 형으로 변경
     processed_observe = resize(rgb2gray(observe), (84, 84), mode='constant') 
-    return torch.tensor(processed_observe, dtype=torch.float32)
+    return processed_observe
 
 if __name__ == "__main__":
-    memory = deque(maxlen=150000)
-
     logger = logger.Logger('atari_torch.log')
+    memory = replay.ReplayMemory(size=600000)
 
     for loop in range(0, 1000):
+        logger.info('------------------------------------------------')
+        logger.info(f'begin loop {loop}')
+        logger.info('------------------------------------------------')
         # 환경과 DQN 에이전트 생성
+
         #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
         env = gym.make('BreakoutDeterministic-v4')
-        render = False
+        render = True
 
         agent = DQNAgent(action_size=3, memory=memory)
 
@@ -229,8 +232,11 @@ if __name__ == "__main__":
                 observe, _, _, _ = env.step(1)
 
             # 프레임을 전처리 한 후 4개의 상태를 쌓아서 입력값으로 사용.
-            state = pre_processing(observe)
-            history = torch.stack([state, state, state, state], dim=0) # (4, 84, 84)
+            current_frame = pre_processing(observe)
+            agent.add_experience(0, current_frame, 0, False)
+            agent.add_experience(0, current_frame, 0, False)
+            agent.add_experience(0, current_frame, 0, False)
+            current_index = agent.add_experience(0, current_frame, 0, False)
 
             while not done:
                 if render:
@@ -238,6 +244,10 @@ if __name__ == "__main__":
                 global_step += 1
                 step += 1
 
+                if current_index < 3: 
+                    current_index = 3
+
+                history = agent.get_history(current_index)
                 # 바로 전 history를 입력으로 받아 행동을 선택
                 action, q_values = agent.get_action(history)
                 # 1: 정지, 2: 왼쪽, 3: 오른쪽
@@ -251,11 +261,6 @@ if __name__ == "__main__":
                 observe, reward, done, info = env.step(real_action)
                 # 각 타임스텝마다 상태 전처리
                 next_state = pre_processing(observe)
-                next_history = history.clone()
-                next_history[0, :, :] = history[1, :, :]
-                next_history[1, :, :] = history[2, :, :]
-                next_history[2, :, :] = history[3, :, :]
-                next_history[3, :, :] = next_state
 
                 agent.avg_q_max += np.max(q_values)
 
@@ -267,7 +272,7 @@ if __name__ == "__main__":
                 score += reward
                 reward = np.clip(reward, -1., 1.)
                 # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장 후 학습
-                agent.append_sample(history, action, reward, next_history, dead)
+                current_index = agent.add_experience(action, next_state, reward, dead)
 
                 # 리플레이 메모리 크기가 정해놓은 수치에 도달한 시점부터 모델 학습 시작
                 if len(agent.memory) >= agent.train_start:
@@ -276,12 +281,6 @@ if __name__ == "__main__":
                     # 일정 시간마다 타겟모델을 모델의 가중치로 업데이트
                     if global_step % agent.update_target_rate == 0:
                         agent.update_target_model()
-
-                if dead:
-                    history = torch.stack((next_state, next_state,
-                                        next_state, next_state), dim=0)
-                else:
-                    history = next_history
 
                 if done:
                     # 각 에피소드 당 학습 정보를 기록

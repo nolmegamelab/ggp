@@ -5,7 +5,7 @@ import time
 # https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb
 class ReplayMemory:
     """Replay Memory that stores the last size=1,000,000 transitions"""
-    def __init__(self, size=1000000, frame_height=84, frame_width=84,
+    def __init__(self, size=600000, frame_height=84, frame_width=84,
                  agent_history_length=4, batch_size=32, num_heads=1, bernoulli_probability=1.0):
         """
         Args:
@@ -29,15 +29,15 @@ class ReplayMemory:
         # Pre-allocate memory
         self.actions = np.empty(self.size, dtype=np.int32)
         self.rewards = np.empty(self.size, dtype=np.float32)
-        self.frames = np.empty((self.size, self.frame_height, self.frame_width), dtype=np.uint8)
+        self.frames = np.empty((self.size, self.frame_height, self.frame_width), dtype=np.float32)
         self.terminal_flags = np.empty(self.size, dtype=np.bool)
         self.masks = np.empty((self.size, self.num_heads), dtype=np.bool)
 
         # Pre-allocate memory for the states and new_states in a minibatch
         self.states = np.empty((batch_size, self.agent_history_length,
-                                self.frame_height, self.frame_width), dtype=np.uint8)
+                                self.frame_height, self.frame_width), dtype=np.float32)
         self.new_states = np.empty((batch_size, self.agent_history_length,
-                                    self.frame_height, self.frame_width), dtype=np.uint8)
+                                    self.frame_height, self.frame_width), dtype=np.float32)
         self.indices = np.empty(batch_size, dtype=np.int32)
         self.random_state = np.random.RandomState(393)
         if self.num_heads == 1:
@@ -96,6 +96,10 @@ class ReplayMemory:
         self.masks[self.current] = mask
         self.count = max(self.count, self.current+1)
         self.current = (self.current + 1) % self.size
+        return self.current
+
+    def get_history(self, current_index):
+        return self._get_state(current_index)
 
     def _get_state(self, index):
         if self.count is 0:
@@ -128,9 +132,9 @@ class ReplayMemory:
         """
         if batch_size != self.states.shape[0]:
             self.states = np.empty((batch_size, self.agent_history_length,
-                                    self.frame_height, self.frame_width), dtype=np.uint8)
+                                    self.frame_height, self.frame_width), dtype=np.float32)
             self.new_states = np.empty((batch_size, self.agent_history_length,
-                                        self.frame_height, self.frame_width), dtype=np.uint8)
+                                        self.frame_height, self.frame_width), dtype=np.float32)
 
         if self.count < self.agent_history_length:
             raise ValueError('Not enough memories to get a minibatch')
@@ -143,3 +147,5 @@ class ReplayMemory:
         return self.states, self.actions[self.indices], self.rewards[self.indices], self.new_states, self.terminal_flags[self.indices], self.masks[self.indices]
 
 
+    def __len__(self):
+        return self.count
