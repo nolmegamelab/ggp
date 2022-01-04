@@ -14,6 +14,8 @@ from skimage.color import rgb2gray
 from skimage.transform import resize
 import replay
 import logger
+import env as atari
+import renderer as scene
 
 # from distper 
 class DQN(nn.Module):
@@ -41,21 +43,9 @@ class DQN(nn.Module):
             nn.Linear(conv_out_size, 512),
             nn.ReLU(),
             nn.Linear(512, self.num_actions)
-        )
-        #self.conv.apply(self.init_weights)
-        #self.fc.apply(self.init_weights)
+        )        
 
-    def init_weights(self, m):
-        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-            m.weight.data.fill_(0.0)
-            m.bias.data.fill_(0.01)
-
-    def _get_conv_out(self, shape):
-        o = self.conv(torch.zeros(1, *shape))
-        return int(np.prod(o.size()))
-
-    def forward(self, x):
-        """전방 연쇄."""
+    def forward(self, x):       
         conv = self.conv(x)
         conv_out = conv.view(x.size()[0], -1)
         return self.fc(conv_out)
@@ -74,12 +64,14 @@ class DQN(nn.Module):
                 action = random.randrange(self.num_actions)
         return action, q_values.cpu().numpy()[0]
 
-
+    def _get_conv_out(self, shape):
+        o = self.conv(torch.zeros(1, *shape))
+        return int(np.prod(o.size()))
 
 
 # 브레이크아웃 예제에서의 DQN 에이전트
 class DQNAgent:
-    def __init__(self, action_size, memory=None, state_size=(4, 84, 84)):
+    def __init__(self, action_size, memory=None, state_size=(4, 84, 84), eps_start=1):
         # 상태와 행동의 크기 정의
         self.state_size = state_size
         self.action_size = action_size
@@ -89,9 +81,9 @@ class DQNAgent:
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
         self.learning_rate = 1e-4
-        self.epsilon_start, self.epsilon_end = 0.8, 0.00001
+        self.epsilon_start, self.epsilon_end = eps_start, 0.00001
         self.epsilon = self.epsilon_start
-        self.exploration_steps = 90000.
+        self.exploration_steps = 1000000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
         self.batch_size = 32 
@@ -188,59 +180,47 @@ class DQNAgent:
 
         self.avg_loss += loss.detach().cpu().numpy()
 
-
-# 학습속도를 높이기 위해 흑백화면으로 전처리
-def pre_processing(observe):
-    # rgb2gray에서 float 형으로 변경
-    processed_observe = resize(rgb2gray(observe), (84, 84), mode='constant') 
-    return processed_observe
-
 if __name__ == "__main__":
     logger = logger.Logger('atari_torch.log')
-    memory = replay.ReplayMemory(size=600000)
+    memory = replay.ReplayMemory(size=650000)
 
-    for loop in range(0, 1000):
+    for loop in range(1, 1000):
         logger.info('------------------------------------------------')
         logger.info(f'begin loop {loop}')
         logger.info('------------------------------------------------')
         # 환경과 DQN 에이전트 생성
 
         #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
-        env = gym.make('BreakoutDeterministic-v4')
+        env = atari.Environment(rom_file='roms/Breakout.bin', frame_skip=4, num_frames=4, 
+                            no_op_start=30, dead_as_end=True)
+
         render = True
 
-        agent = DQNAgent(action_size=3, memory=memory)
+        renderer = scene.Renderer(84, 84, 84*4, 84, title='Break! out')
+
+        agent = DQNAgent(action_size=4, memory=memory, eps_start=1 - ((2**loop)/1000))
 
         global_step = 0
         score_avg = 0
         score_max = 0
-
-        # 불필요한 행동을 없애주기 위한 딕셔너리 선언
-        action_dict = {0:1, 1:2, 2:3, 3:3}
-
         num_episode = 100000
+
         for e in range(num_episode):
             done = False
             dead = False
 
-            step, score, start_life = 0, 0, 5
+            step, score = 0, 0
             # env 초기화
             observe = env.reset()
 
-            # 랜덤으로 뽑힌 값 만큼의 프레임동안 움직이지 않음
-            for _ in range(random.randint(1, agent.no_op_steps)):
-                observe, _, _, _ = env.step(1)
-
             # 프레임을 전처리 한 후 4개의 상태를 쌓아서 입력값으로 사용.
-            current_frame = pre_processing(observe)
-            agent.add_experience(0, current_frame, 0, False)
-            agent.add_experience(0, current_frame, 0, False)
-            agent.add_experience(0, current_frame, 0, False)
+            current_frame = observe[-1]
+            agent.add_experience(0, observe[0], 0, False)
+            agent.add_experience(0, observe[1], 0, False)
+            agent.add_experience(0, observe[2], 0, False)
             current_index = agent.add_experience(0, current_frame, 0, False)
 
             while not done:
-                if render:
-                    env.render()
                 global_step += 1
                 step += 1
 
@@ -248,29 +228,36 @@ if __name__ == "__main__":
                     current_index = 3
 
                 history = agent.get_history(current_index)
+                
+                if render: 
+                    hs = history * 255
+                    for i in range(4):
+                        h = hs[i]
+                        mem = np.stack([h, h, h], axis=2)
+                        renderer.render(i*84, 0, mem)
+                    renderer.swap()
+                
                 # 바로 전 history를 입력으로 받아 행동을 선택
                 action, q_values = agent.get_action(history)
-                # 1: 정지, 2: 왼쪽, 3: 오른쪽
-                real_action = action_dict[action]
 
                 # 죽었을 때 시작하기 위해 발사 행동을 함
                 if dead:
-                    action, real_action, dead = 0, 1, False
+                    action = 1
 
                 # 선택한 행동으로 환경에서 한 타임스텝 진행
-                observe, reward, done, info = env.step(real_action)
+                # 1: 정지, 2: 왼쪽, 3: 오른쪽
+                observe, reward, dead, done = env.step(action)
                 # 각 타임스텝마다 상태 전처리
-                next_state = pre_processing(observe)
+                next_state = observe[-1]
 
                 agent.avg_q_max += np.max(q_values)
 
-                if start_life > info['lives']:
-                    dead = True
+                if dead:
                     reward = -1
-                    start_life = info['lives']
 
-                score += reward
                 reward = np.clip(reward, -1., 1.)
+                score += reward
+
                 # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장 후 학습
                 current_index = agent.add_experience(action, next_state, reward, dead)
 
@@ -281,6 +268,7 @@ if __name__ == "__main__":
                     # 일정 시간마다 타겟모델을 모델의 가중치로 업데이트
                     if global_step % agent.update_target_rate == 0:
                         agent.update_target_model()
+                        logger.info(f'target updated. global_stp: {global_step}')
 
                 if done:
                     # 각 에피소드 당 학습 정보를 기록
@@ -297,7 +285,7 @@ if __name__ == "__main__":
                     log += "score avg: {:4.1f} | ".format(score_avg)
                     log += "memory length: {:5d} | ".format(len(agent.memory))
                     log += "epsilon: {:.3f} | ".format(agent.epsilon)
-                    log += "q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
+                    log += "max q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
                     log += "avg loss : {:3.4f}".format(agent.avg_loss / float(step))
                     logger.info(log)
 
@@ -310,4 +298,4 @@ if __name__ == "__main__":
             # 모델 저장
             if (e+1) % 50 == 0:
                 torch.save(agent.model.state_dict(), "./save_model/model_torch.pth")
-                print('model saved\n')
+                logger.info(f'model saved. global_step: {global_step}')

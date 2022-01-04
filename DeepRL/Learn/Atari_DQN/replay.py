@@ -96,7 +96,7 @@ class ReplayMemory:
         self.masks[self.current] = mask
         self.count = max(self.count, self.current+1)
         self.current = (self.current + 1) % self.size
-        return self.current
+        return self.current-1
 
     def get_history(self, current_index):
         return self._get_state(current_index)
