@@ -11,7 +11,7 @@ from tensorflow.keras.initializers import RandomUniform
 import tensorflow as tf
 from tensorflow.python.keras.backend_config import epsilon
 
-EPISODES = 1000
+EPISODES = 2000
 
 class A2C(tf.keras.Model):
     def __init__(self, action_size):
@@ -37,7 +37,7 @@ class A2C(tf.keras.Model):
 class A2CAgent:
 
     def __init__(self, action_size):
-        self.render = True
+        self.render = False
         self.load_model = False
 
         # 
