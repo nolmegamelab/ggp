@@ -240,7 +240,7 @@ class PriorityMemory:
     We use the same structure to compute the minimum.
     """
 
-    def __init__(self, alpha=0.6, size=650000):
+    def __init__(self, alpha=0.6, size=650000, state_shape=(650000, 84, 84)):
         """
         ### Initialize
         """
@@ -258,7 +258,7 @@ class PriorityMemory:
 
         # Arrays for buffer
         self.data = {
-            'frame': np.zeros(shape=(size, 84, 84), dtype=np.float32),
+            'frame': np.zeros(shape=state_shape, dtype=np.float32),
             'action': np.zeros(shape=size, dtype=np.int32),
             'reward': np.zeros(shape=size, dtype=np.float32),
             'done': np.zeros(shape=size, dtype=np.bool)
@@ -305,6 +305,11 @@ class PriorityMemory:
         frames = np.array(
             [self.data['frame'][c0], self.data['frame'][c1], self.data['frame'][c2], self.data['frame'][c3]])
         return frames
+
+    def get_frame(self, current_index):
+        return np.array([
+                            self.data['frame'][current_index]
+                        ])
 
     def get_minibatch(self, batch_size, beta):
         """
@@ -356,10 +361,10 @@ class PriorityMemory:
         dones = []
         rewards = []
         for i in range(batch_size):
-            states.append( self.get_history(samples['indexes'][i] ))
+            states.append( self.get_frame(samples['indexes'][i] ))
             actions.append(self.data['action'][samples['indexes'][i]])
             rewards.append(self.data['reward'][samples['indexes'][i]])
-            next_states.append( self.get_history(self._get_next_index(samples['indexes'][i]) ))
+            next_states.append( self.get_frame(self._get_next_index(samples['indexes'][i]) ))
             dones.append(self.data['done'][samples['indexes'][i]])
             
         return  (

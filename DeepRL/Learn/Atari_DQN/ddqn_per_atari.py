@@ -102,13 +102,13 @@ class DuelDQNAgent:
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
 
-        self.beta_start, self.beta_end = 0.1, 1 
+        self.beta_start, self.beta_end = 0.4, 1  # paper: 0.4 -> 1
         self.beta_annealing_step = self.beta_end - self.beta_start 
         self.beta_annealing_step /= self.exploration_steps 
         self.beta = self.beta_start
 
         self.batch_size = 32 
-        self.train_start = 50000
+        self.train_start = 10000
         self.update_target_rate = 30000
 
         if memory is None:
@@ -129,7 +129,7 @@ class DuelDQNAgent:
         load_model = False
 
         if load_model:
-            self.model.load_state_dict(torch.load("./save_model/model_torch_per.pth"))
+            self.model.load_state_dict(torch.load("./save_model/model_torch_ddqn.pth"))
 
         # 타깃 모델 초기화
         self.update_target_model()
@@ -183,10 +183,10 @@ class DuelDQNAgent:
         weights = torch.tensor(s_weights, device=self.device, dtype=torch.float32).unsqueeze(1)
 
         with torch.no_grad():
-            double_q_value = self.model(next_states)
+            double_q_values = self.model(next_states)
             next_q_values = self.target_model(next_states)
 
-            best_next_action = torch.argmax(double_q_value, -1)
+            best_next_action = torch.argmax(double_q_values, -1)
             next_q_a_values = next_q_values.gather(-1, best_next_action.unsqueeze(-1)).squeeze(-1)
             # The above is different from DQN 
             #next_q_a_values = next_q_values.max(1)[0]
@@ -216,7 +216,7 @@ class DuelDQNAgent:
         self.avg_loss += loss.cpu().detach().item()
 
 if __name__ == "__main__":
-    logger = logger.Logger('atari_torch_per.log')
+    logger = logger.Logger('atari_torch_ddqn.log')
     memory = replay.PriorityMemory(size=650000)
 
     for loop in range(1, 1000):
@@ -335,5 +335,5 @@ if __name__ == "__main__":
 
             # 모델 저장
             if (e+1) % 50 == 0:
-                torch.save(agent.model.state_dict(), "./save_model/model_torch_per.pth")
+                torch.save(agent.model.state_dict(), "./save_model/model_torch_ddqn.pth")
                 logger.info(f'model saved. global_step: {global_step}')
