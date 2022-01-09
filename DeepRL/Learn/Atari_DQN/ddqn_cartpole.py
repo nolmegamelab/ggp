@@ -28,18 +28,18 @@ class DuelDQN(nn.Module):
         self.num_actions = action_size
 
         self.lin = nn.Sequential(
-            nn.Linear(self.input_shape, 128),
+            nn.Linear(self.input_shape, 64),
             nn.ReLU(),
         )
 
         self.state_value = nn.Sequential(
-            nn.Linear(128, 256),
+            nn.Linear(64, 256),
             nn.ReLU(), 
             nn.Linear(256, 1)
         )        
 
         self.action_value = nn.Sequential(
-            nn.Linear(128, 256), 
+            nn.Linear(64, 256), 
             nn.ReLU(), 
             nn.Linear(256, self.num_actions)
         )
@@ -63,6 +63,7 @@ class DuelDQN(nn.Module):
             q_values = self.forward(state)
 
             if random.random() > epsilon:
+                #action = torch.argmax(q_values, dim=1).cpu().numpy
                 action = q_values.max(1)[1].item()
             else:
                 action = random.randrange(self.num_actions)
@@ -95,10 +96,7 @@ class DuelDQNAgent:
         self.train_start = 1000
         self.update_target_rate = 1000
 
-        if memory is None:
-            self.memory = replay.PriorityMemory(size=600000, state_shape=(600000, 84, 84))
-        else:
-            self.memory = memory
+        self.memory = memory
 
         # 게임 시작 후 랜덤하게 움직이지 않는 것에 대한 옵션
         self.no_op_steps = 10
@@ -110,17 +108,17 @@ class DuelDQNAgent:
         self.target_model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
-        load_model = True 
+        load_model = True
 
         if load_model:
-            self.model.load_state_dict(torch.load("./save_model/model_ddqn_per_cartpole.pth"))
+            self.model.load_state_dict(torch.load("./save_model/model_ddqn_cartpole.pth"))
 
         # 타깃 모델 초기화
         self.update_target_model()
 
         self.avg_q_max, self.avg_loss = 0, 0
 
-        self.writer = tf.summary.create_file_writer('summary/cartpole_ddqn_per')
+        self.writer = tf.summary.create_file_writer('summary/ddqn_cartpole')
         self.model_path = os.path.join(os.getcwd(), 'save_model', 'model')
 
     # 타깃 모델을 모델의 가중치로 업데이트
@@ -159,15 +157,14 @@ class DuelDQNAgent:
         if self.beta < self.beta_end:
             self.beta += self.beta_annealing_step
 
-        batch = self.memory.get_minibatch(self.batch_size, self.beta)
-        s_states, s_actions, s_rewards, s_nexts, s_dones, s_weights, s_indices = batch
+        batch = self.memory.get_minibatch_normal(self.batch_size)
+        s_states, s_actions, s_rewards, s_nexts, s_dones = batch
 
         states = torch.tensor(s_states, device=self.device, dtype=torch.float32).squeeze(1)
         actions = torch.tensor(s_actions, device=self.device, dtype=torch.long).unsqueeze(1)
         rewards = torch.tensor(s_rewards, device=self.device, dtype=torch.float32)
         next_states = torch.tensor(s_nexts, device=self.device, dtype=torch.float32).squeeze(1)
         dones = torch.tensor(s_dones, device=self.device, dtype=torch.int8)
-        weights = torch.tensor(s_weights, device=self.device, dtype=torch.float32).unsqueeze(1)
 
         with torch.no_grad():
             double_q_values = self.model(next_states)
@@ -186,10 +183,8 @@ class DuelDQNAgent:
         q_values = self.model(states)
         q_a_values = q_values.gather(-1, actions)
 
-        td_error = torch.abs(expected_q_a_values - q_a_values)
         # Huber loss is very important for the convergence of breakout play
-        losses = torch.nn.SmoothL1Loss(reduction='none')(expected_q_a_values, q_a_values)
-        loss = torch.mean(weights * losses)
+        loss = torch.nn.SmoothL1Loss(reduction='mean')(expected_q_a_values, q_a_values)
 
         # update weights
         self.optimizer.zero_grad()
@@ -198,13 +193,11 @@ class DuelDQNAgent:
         torch.nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), max_norm=10)
         self.optimizer.step()
 
-        priorities = (td_error + 1e-6).cpu().detach().numpy()
-        self.memory.update_priorities(s_indices, priorities)
         self.avg_loss += loss.cpu().detach().item()
 
 if __name__ == "__main__":
-    logger = logger.Logger('cartpole_torch_ddqn_per.log')
-    memory = replay.PriorityMemory(size=10000, state_shape=(10000, 4))
+    logger = logger.Logger('cartpole_torch_ddqn.log')
+    memory = replay.PriorityMemory(size=50000, state_shape=(50000, 4))
 
     for loop in range(1, 1000):
         logger.info('------------------------------------------------')
@@ -217,7 +210,7 @@ if __name__ == "__main__":
 
         render = True
 
-        agent = DuelDQNAgent(action_size=2, memory=memory, state_size=4, eps_start=0.001)
+        agent = DuelDQNAgent(action_size=2, memory=memory, state_size=4, eps_start=0.0)
 
         global_step = 0
         score_avg = 0
@@ -237,24 +230,20 @@ if __name__ == "__main__":
                 global_step += 1
                 step += 1
 
-                state = next_state
-                
                 if render: 
                     env.render()
+
+                state = next_state
                 
                 # 바로 전 history를 입력으로 받아 행동을 선택
                 action, q_values = agent.get_action(np.array([state]))
 
-                # 죽었을 때 시작하기 위해 발사 행동을 함
-                if dead:
-                    action = 1
-
                 # 선택한 행동으로 환경에서 한 타임스텝 진행
                 # 1: 정지, 2: 왼쪽, 3: 오른쪽
-                next_state , reward, done, info = env.step(action)
-                # 각 타임스텝마다 상태 전처리
+                next_state, reward, done, info = env.step(action)
 
                 agent.avg_q_max += np.max(q_values)
+
                 score += reward
 
                 # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장 후 학습
@@ -285,7 +274,6 @@ if __name__ == "__main__":
                     log += "score avg: {:4.1f} | ".format(score_avg)
                     log += "memory length: {:5d} | ".format(agent.memory.get_size())
                     log += "epsilon: {:.3f} | ".format(agent.epsilon)
-                    log += "beta: {:.3f} | ".format(agent.beta)
                     log += "max q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
                     log += "avg loss : {:3.4f}".format(agent.avg_loss / float(step))
                     logger.info(log)
@@ -293,10 +281,10 @@ if __name__ == "__main__":
                     agent.avg_q_max, agent.avg_loss = 0, 0
 
                 # start from beginning
-            #if agent.epsilon < 0.001:
+            #if agent.epsilon < 0.0001:
             #    break
 
             # 모델 저장
             if (e+1) % 50 == 0:
-                torch.save(agent.model.state_dict(), "./save_model/model_ddqn_per_cartpole.pth")
+                torch.save(agent.model.state_dict(), "./save_model/model_ddqn_cartpole.pth")
                 logger.info(f'model saved. global_step: {global_step}')

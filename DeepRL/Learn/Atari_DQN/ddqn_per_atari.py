@@ -95,10 +95,10 @@ class DuelDQNAgent:
         # 0.6 : 한번 훈련 후 지정 
         # 0.1 : 꽤 잘 플레이 하면 지정 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-4
+        self.learning_rate = 3e-4
         self.epsilon_start, self.epsilon_end = eps_start, 0.00001
         self.epsilon = self.epsilon_start
-        self.exploration_steps = 200000.
+        self.exploration_steps = 300000.
         self.epsilon_decay_step = self.epsilon_start - self.epsilon_end
         self.epsilon_decay_step /= self.exploration_steps
 
@@ -109,10 +109,10 @@ class DuelDQNAgent:
 
         self.batch_size = 32 
         self.train_start = 10000
-        self.update_target_rate = 30000
+        self.update_target_rate = 10000
 
         if memory is None:
-            self.memory = replay.ReplayMemory(size=600000)
+            self.memory = replay.PriorityMemory(size=600000, state_shape=(600000, 84, 84))
         else:
             self.memory = memory
 
@@ -126,10 +126,10 @@ class DuelDQNAgent:
         self.target_model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
-        load_model = False
+        load_model = True
 
         if load_model:
-            self.model.load_state_dict(torch.load("./save_model/model_torch_ddqn.pth"))
+            self.model.load_state_dict(torch.load("./save_model/model_ddqn_per_atari.pth"))
 
         # 타깃 모델 초기화
         self.update_target_model()
@@ -172,15 +172,17 @@ class DuelDQNAgent:
         if self.beta < self.beta_end:
             self.beta += self.beta_annealing_step
 
-        batch = self.memory.get_minibatch(self.batch_size, self.beta)
-        s_states, s_actions, s_rewards, s_nexts, s_dones, s_weights, s_indices = batch
+        #batch = self.memory.get_minibatch(self.batch_size, self.beta)
+        #s_states, s_actions, s_rewards, s_nexts, s_dones, s_weights, s_indices = batch
+        batch = self.memory.get_minibatch_normal(self.batch_size)
+        s_states, s_actions, s_rewards, s_nexts, s_dones = batch
 
         states = torch.tensor(s_states, device=self.device, dtype=torch.float32)
         actions = torch.tensor(s_actions, device=self.device, dtype=torch.long).unsqueeze(1)
         rewards = torch.tensor(s_rewards, device=self.device, dtype=torch.float32)
         next_states = torch.tensor(s_nexts, device=self.device, dtype=torch.float32)
         dones = torch.tensor(s_dones, device=self.device, dtype=torch.int8)
-        weights = torch.tensor(s_weights, device=self.device, dtype=torch.float32).unsqueeze(1)
+        #weights = torch.tensor(s_weights, device=self.device, dtype=torch.float32).unsqueeze(1)
 
         with torch.no_grad():
             double_q_values = self.model(next_states)
@@ -201,8 +203,8 @@ class DuelDQNAgent:
 
         td_error = torch.abs(expected_q_a_values - q_a_values)
         # Huber loss is very important for the convergence of breakout play
-        losses = torch.nn.SmoothL1Loss(reduction='none')(expected_q_a_values, q_a_values)
-        loss = torch.mean(weights * losses)
+        loss = torch.nn.SmoothL1Loss(reduction='mean')(expected_q_a_values, q_a_values)
+        #loss = torch.mean(weights * losses)
 
         # update weights
         self.optimizer.zero_grad()
@@ -212,17 +214,18 @@ class DuelDQNAgent:
         self.optimizer.step()
 
         priorities = (td_error + 1e-6).cpu().detach().numpy()
-        self.memory.update_priorities(s_indices, priorities)
+        #self.memory.update_priorities(s_indices, priorities)
         self.avg_loss += loss.cpu().detach().item()
 
-if __name__ == "__main__":
-    logger = logger.Logger('atari_torch_ddqn.log')
-    memory = replay.PriorityMemory(size=650000)
+def explore():
 
-    for loop in range(1, 1000):
-        logger.info('------------------------------------------------')
-        logger.info(f'begin loop {loop}')
-        logger.info('------------------------------------------------')
+    log = logger.Logger('ddqn_per_atari.log')
+    memory = replay.PriorityMemory(size=650000, state_shape=(650000, 84, 84))
+
+    for loop in range(0, 1000):
+        log.info('------------------------------------------------')
+        log.info(f'begin loop {loop}')
+        log.info('------------------------------------------------')
         # 환경과 DQN 에이전트 생성
 
         #env = gym.make('BreakoutDeterministic-v4', render_mode='human')
@@ -234,7 +237,7 @@ if __name__ == "__main__":
         if render:
             renderer = scene.Renderer(84, 84, 84*4, 84, title='Break! out')
 
-        agent = DuelDQNAgent(action_size=4, memory=memory, eps_start=1 - ((2**loop)/1000))
+        agent = DuelDQNAgent(action_size=4, memory=memory, eps_start=1 - loop/10)
 
         global_step = 0
         score_avg = 0
@@ -255,6 +258,7 @@ if __name__ == "__main__":
             agent.add_experience(0, observe[1], 0, False)
             agent.add_experience(0, observe[2], 0, False)
             current_index = agent.add_experience(0, current_frame, 0, False)
+            next_state = current_frame
 
             while not done:
                 global_step += 1
@@ -264,6 +268,7 @@ if __name__ == "__main__":
                     current_index = 3
 
                 history = agent.get_history(current_index)
+                state = next_state
                 
                 if render: 
                     hs = history * 255
@@ -294,8 +299,8 @@ if __name__ == "__main__":
                 score += reward
                 reward = np.clip(reward, -1., 1.)
 
-                # 샘플 <s, a, r, s'>을 리플레이 메모리에 저장 후 학습
-                current_index = agent.add_experience(action, next_state, reward, dead)
+                # 샘플 <s, a, r>을 리플레이 메모리에 저장 후 학습
+                current_index = agent.add_experience(action, state, reward, dead)
 
                 # 리플레이 메모리 크기가 정해놓은 수치에 도달한 시점부터 모델 학습 시작
                 if agent.memory.get_size() >= agent.train_start:
@@ -304,7 +309,7 @@ if __name__ == "__main__":
                     # 일정 시간마다 타겟모델을 모델의 가중치로 업데이트
                     if global_step % agent.update_target_rate == 0:
                         agent.update_target_model()
-                        logger.info(f'target updated. global_stp: {global_step}')
+                        log.info(f'target updated. global_stp: {global_step}')
 
                 if done:
                     
@@ -315,17 +320,17 @@ if __name__ == "__main__":
                     score_avg = 0.9 * score_avg + 0.1 * score if score_avg != 0 else score
                     score_max = score if score > score_max else score_max
 
-                    log = "loop: {:5d} | ".format(loop)
-                    log += "episode: {:5d} | ".format(e)
-                    log += "score: {:4.1f} | ".format(score)
-                    log += "score max : {:4.1f} | ".format(score_max)
-                    log += "score avg: {:4.1f} | ".format(score_avg)
-                    log += "memory length: {:5d} | ".format(agent.memory.get_size())
-                    log += "epsilon: {:.3f} | ".format(agent.epsilon)
-                    log += "beta: {:.3f} | ".format(agent.beta)
-                    log += "max q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
-                    log += "avg loss : {:3.4f}".format(agent.avg_loss / float(step))
-                    logger.info(log)
+                    l = "loop: {:5d} | ".format(loop)
+                    l += "episode: {:5d} | ".format(e)
+                    l += "score: {:4.1f} | ".format(score)
+                    l += "score max : {:4.1f} | ".format(score_max)
+                    l += "score avg: {:4.1f} | ".format(score_avg)
+                    l += "memory length: {:5d} | ".format(agent.memory.get_size())
+                    l += "epsilon: {:.3f} | ".format(agent.epsilon)
+                    l += "beta: {:.3f} | ".format(agent.beta)
+                    l += "max q avg : {:3.2f} | ".format(agent.avg_q_max / float(step))
+                    l += "avg loss : {:3.7f}".format(agent.avg_loss / float(step))
+                    log.info(l)
 
                     agent.avg_q_max, agent.avg_loss = 0, 0
 
@@ -335,5 +340,9 @@ if __name__ == "__main__":
 
             # 모델 저장
             if (e+1) % 50 == 0:
-                torch.save(agent.model.state_dict(), "./save_model/model_torch_ddqn.pth")
-                logger.info(f'model saved. global_step: {global_step}')
+                torch.save(agent.model.state_dict(), "./save_model/model_ddqn_per_atari.pth")
+                log.info(f'model saved. global_step: {global_step}')
+
+if __name__ == "__main__":
+
+    explore()

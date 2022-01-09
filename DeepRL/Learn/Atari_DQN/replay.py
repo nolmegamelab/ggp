@@ -105,7 +105,7 @@ class ReplayMemory:
         return self._get_state(current_index)
 
     def _get_state(self, index):
-        if self.count is 0:
+        if self.count == 0:
             raise ValueError("The replay memory is empty!")
         if index < self.agent_history_length - 1:
             raise ValueError("Index must be min 3")
@@ -299,9 +299,9 @@ class PriorityMemory:
 
     def get_history(self, current_index):
         c3 = current_index
-        c2 = self._get_valid_index(current_index-1) % self.capacity
-        c1 = self._get_valid_index(current_index-2) % self.capacity
-        c0 = self._get_valid_index(current_index-3) % self.capacity
+        c2 = self._get_valid_index(current_index-1) 
+        c1 = self._get_valid_index(current_index-2) 
+        c0 = self._get_valid_index(current_index-3) 
         frames = np.array(
             [self.data['frame'][c0], self.data['frame'][c1], self.data['frame'][c2], self.data['frame'][c3]])
         return frames
@@ -331,7 +331,8 @@ class PriorityMemory:
         for i in range(batch_size):
             mass = random.random() * every_range_len + i * every_range_len
             idx = self._find_prefix_sum_idx(mass)
-            samples['indexes'][i] = idx
+            # make within size range. 
+            samples['indexes'][i] = idx % self.size
 
         # $\min_i P(i) = \frac{\min_i p_i^\alpha}{\sum_k p_k^\alpha}$
         prob_min = self._min() / self._sum()
@@ -361,10 +362,10 @@ class PriorityMemory:
         dones = []
         rewards = []
         for i in range(batch_size):
-            states.append( self.get_frame(samples['indexes'][i] ))
+            states.append(self.get_history(samples['indexes'][i] ))
             actions.append(self.data['action'][samples['indexes'][i]])
             rewards.append(self.data['reward'][samples['indexes'][i]])
-            next_states.append( self.get_frame(self._get_next_index(samples['indexes'][i]) ))
+            next_states.append(self.get_history(self._get_next_index(samples['indexes'][i]) ))
             dones.append(self.data['done'][samples['indexes'][i]])
             
         return  (
@@ -377,12 +378,41 @@ class PriorityMemory:
             samples['indexes']
         ) 
 
+    def get_minibatch_normal(self, batch_size):
+        """
+        ### Sample from buffer without using priority
+        """
+
+        indices = np.random.choice(self.size-1, batch_size)
+
+        # Build states, actions, rewards, next_states, dones, weights, indices np arrays  
+        states = []
+        next_states = []
+        actions = []
+        dones = []
+        rewards = []
+        for i in range(batch_size):
+            states.append(self.get_history(indices[i]))
+            actions.append(self.data['action'][indices[i]])
+            rewards.append(self.data['reward'][indices[i]])
+            next_states.append(self.get_history(self._get_next_index(indices[i])))
+            dones.append(self.data['done'][indices[i]])
+            
+        return  (
+            np.array(states), 
+            np.array(actions), 
+            np.array(rewards), 
+            np.array(next_states), 
+            np.array(dones), 
+        ) 
+
     def update_priorities(self, indexes, priorities):
         """
         ### Update priorities
         """
 
         for idx, priority in zip(indexes, priorities):
+            assert priority > 0
             # Set current max priority
             self.max_priority = max(self.max_priority, priority)
             # priority is a just td-error. it becomes prob only after divided by _sum()
